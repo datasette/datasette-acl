@@ -1,0 +1,33 @@
+[project]
+name = "datasette-acl"
+version = "0.1"
+description = "Advanced permission management for Datasette"
+readme = "README.md"
+authors = [{name = "Simon Willison"}]
+license = {text = "Apache-2.0"}
+classifiers=[
+    "Framework :: Datasette",
+    "License :: OSI Approved :: Apache Software License"
+]
+requires-python = ">=3.8"
+dependencies = [
+    "datasette"
+]
+
+[project.urls]
+Homepage = "https://github.com/datasette/datasette-acl"
+Changelog = "https://github.com/datasette/datasette-acl/releases"
+Issues = "https://github.com/datasette/datasette-acl/issues"
+CI = "https://github.com/datasette/datasette-acl/actions"
+
+[project.entry-points.datasette]
+acl = "datasette_acl"
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+
+[tool.setuptools.package-data]
+datasette_acl = ["static/*", "templates/*"]

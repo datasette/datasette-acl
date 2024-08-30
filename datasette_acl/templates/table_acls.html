@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Permissions for {{ database_name }}/{{ table_name }}{% endblock %}
+
+{% block content %}
+<h1>Permissions for {{ database_name }}/{{ table_name }}</h1>
+
+<p><a href=" {{ urls.table(database_name, table_name) }}">Back to table</a></p>
+
+<form action="{{ request.path }}" method="post">
+<table>
+  <thead>
+    <tr>
+      <th>Group</th>
+      {% for action in actions %}
+        <th>{{ action }}</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for group in groups %}
+      <tr>
+        <td>{{ group }}</td>
+        {% for action in actions %}
+          <td><label style="display: block"><input type="checkbox" name="permissions_{{ group }}_{{ action }}" {% if permissions and permissions.get(group, {}).get(action) %}checked{% endif %}></label></td>
+        {% endfor %}
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p style="margin-top: 1em">
+  <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+  <input type="submit" value="Save changes">
+</p>
+</form>
+{% endblock %}

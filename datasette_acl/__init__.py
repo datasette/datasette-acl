@@ -121,6 +121,14 @@ def startup(datasette):
         """,
             [{"name": n} for n in datasette.permissions.keys()],
         )
+        # And any dynamic groups
+        config = datasette.plugin_config("datasette-acl")
+        groups = config.get("dynamic-groups")
+        if groups:
+            await db.execute_write_many(
+                "insert or ignore into acl_groups (name) values (:name)",
+                [{"name": name} for name in groups.keys()],
+            )
 
     return inner
 

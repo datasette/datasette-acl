@@ -27,8 +27,9 @@ async def test_update_dynamic_groups():
         "acl_actor_groups",
         "acl",
     }.issubset(tables)
-    # Group tables should start empty
-    assert (await db.execute("select count(*) from acl_groups")).single_value() == 0
+    # Group tables should start populated
+    assert (await db.execute("select count(*) from acl_groups")).single_value() == 1
+    # But no actor groups
     assert (
         await db.execute("select count(*) from acl_actor_groups")
     ).single_value() == 0

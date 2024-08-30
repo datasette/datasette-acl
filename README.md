@@ -5,7 +5,7 @@
 [![Tests](https://github.com/datasette/datasette-acl/actions/workflows/test.yml/badge.svg)](https://github.com/datasette/datasette-acl/actions/workflows/test.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/datasette/datasette-acl/blob/main/LICENSE)
 
-Advanced permission management for Datasette
+Advanced permission management for Datasette. **Highly experimental**.
 
 ## Installation
 
@@ -15,7 +15,25 @@ datasette install datasette-acl
 ```
 ## Usage
 
-Write this once the plugin adds a UI.
+This plugin is under active development. For the moment, it only supports defining permissions for tables against dynamic groups, described below.
+
+Permissions are saved in the internal database. This means you should run Datasette with the `--internal path/to/internal.db` option, otherwise your permissions will be reset every time you restart Datasette.
+
+Users with the new `datasette-acl` permission will have the ability to access a UI for setting permissions for groups on a table.
+
+To configure the root user to have this permission, add the following to your Datasette configuration:
+
+```yaml
+permissions:
+  datasette-acl:
+    id: root
+```
+Alternatively you can start Datasette running like this:
+```bash
+datasette mydata.db --root --internal internal.db \
+  -s permissions.datasette-acl.id root
+```
+
 
 ### Dynamic groups
 

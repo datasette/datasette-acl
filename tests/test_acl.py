@@ -94,13 +94,14 @@ async def test_permission_allowed():
     await db.execute_write("create table t (id primary key)")
     await datasette.invoke_startup()
     db = datasette.get_internal_database()
+    admin_actor = {"id": "simon", "is_admin": True}
     # That group should exist
     group_id = (
         await db.execute("select id from acl_groups where name = 'admin'")
     ).single_value()
     assert group_id == 1
     allowed = await datasette.permission_allowed(
-        actor={"id": "admin"}, action="insert-row", resource=["db", "t"]
+        actor=admin_actor, action="insert-row", resource=["db", "t"]
     )
     assert not allowed
     # Use the /db/table/-/acl page to insert a permission
@@ -141,7 +142,6 @@ async def test_permission_allowed():
             )
         )
     ]
-    assert len(acls) == 1
     assert acls == [
         {
             "group_name": "admin",
@@ -151,9 +151,8 @@ async def test_permission_allowed():
         }
     ]
     allowed = await datasette.permission_allowed(
-        actor={"id": "admin", "is_admin": True},
+        actor=admin_actor,
         action="insert-row",
         resource=["db", "t"],
     )
-    all = await db.execute_fn(lambda conn: "".join(conn.iterdump()))
     assert allowed

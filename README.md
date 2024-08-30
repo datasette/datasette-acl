@@ -15,7 +15,25 @@ datasette install datasette-acl
 ```
 ## Usage
 
-Usage instructions go here.
+Write this once the plugin adds a UI.
+
+### Dynamic groups
+
+You may wish to define permission rules against groups of actors based on their actor attributes, without needing to manually add those actors to a group. This can be achieved by defining a dynamic group in the `datasette-acl` configuration.
+
+Dynamic groups are defined in terms of [allow blocks](https://docs.datasette.io/en/stable/authentication.html#defining-permissions-with-allow-blocks). The following configuration defines two dynamic groups - one called `admin` that contains all users with `"is_admin": true` in their attributes, and another called `sales` that explicitly lists the users with `"sales"` as one of the values in their `department` array.
+
+```yaml
+plugins:
+  datasette-acl:
+    dynamic-groups:
+      admin:
+        is_admin": true
+      sales:
+        department: ["sales"]
+```
+
+Any time an actor has their permissions checked they will be dynamically added to or removed from these groups based on the current value of their actor attributes.
 
 ## Development
 

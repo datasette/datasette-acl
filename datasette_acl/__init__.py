@@ -149,8 +149,8 @@ class OneSecondCache:
 one_second_cache = OneSecondCache()
 
 
-async def update_dynamic_groups(datasette, actor):
-    if one_second_cache.get(actor["id"]):
+async def update_dynamic_groups(datasette, actor, skip_cache=False):
+    if (not skip_cache) and one_second_cache.get(actor["id"]):
         # Don't do this more than once a second per actor
         return
     one_second_cache.set(actor["id"], 1)

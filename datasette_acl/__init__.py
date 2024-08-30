@@ -1,4 +1,4 @@
-from datasette import hookimpl, Response
+from datasette import hookimpl, Response, Permission, Forbidden
 from datasette.utils import actor_matches_allow
 import time
 import json
@@ -7,7 +7,8 @@ CREATE_TABLES_SQL = """
 create table if not exists acl_resources (
     id integer primary key autoincrement,
     database text not null,
-    resource text
+    resource text,
+    unique(database, resource)
 );
 
 create table if not exists acl_actions (
@@ -243,8 +244,145 @@ async def debug_acl(request, datasette):
     return Response.json(list(datasette.permissions.items()), default=str)
 
 
+async def table_acls(request, datasette):
+    if not await can_edit_permissions(datasette, request.actor):
+        raise Forbidden("You do not have permission to edit permissions")
+    table = request.url_vars["table"]
+    database = request.url_vars["database"]
+    internal_db = datasette.get_internal_database()
+    groups = [
+        g["name"]
+        for g in await datasette.get_internal_database().execute(
+            "select name from acl_groups"
+        )
+    ]
+
+    # Ensure we have a resource_id for this table
+    await internal_db.execute_write(
+        "INSERT OR IGNORE INTO acl_resources (database, resource) VALUES (?, ?);",
+        [database, table],
+    )
+    resource_id = (
+        await internal_db.execute(
+            "SELECT id FROM acl_resources WHERE database = ? AND resource = ?",
+            [database, table],
+        )
+    ).single_value()
+
+    if request.method == "POST":
+        # Clear all existing ACLs
+        await internal_db.execute_write(
+            "DELETE FROM acl WHERE resource_id = ?", [resource_id]
+        )
+        changes_made = []
+        post_vars = await request.post_vars()
+        for group in groups:
+            for action in [
+                "insert-row",
+                "delete-row",
+                "update-row",
+                "alter-table",
+                "drop-table",
+            ]:
+                value = post_vars.get(f"permissions_{group}_{action}")
+                if value:
+                    await internal_db.execute_write(
+                        """
+                        INSERT INTO acl (actor_id, group_id, resource_id, action_id)
+                        VALUES (
+                            null,
+                            (SELECT id FROM acl_groups WHERE name = :group_name),
+                            :resource_id,
+                            (SELECT id FROM acl_actions WHERE name = :action_name)
+                        )
+                        """,
+                        {
+                            "group_name": group,
+                            "action_name": action,
+                            "resource_id": resource_id,
+                        },
+                    )
+                    changes_made.append(f"{group} {action}")
+
+        datasette.add_message(request, f"Made changes: {', '.join(changes_made)}")
+        return Response.redirect(request.path)
+
+    permissions = {}
+    # Read ACLs for this table
+    acl_rows = await internal_db.execute(
+        """
+        SELECT acl_groups.name as group_name, acl_actions.name as action_name
+        FROM acl
+        JOIN acl_groups ON acl.group_id = acl_groups.id
+        JOIN acl_actions ON acl.action_id = acl_actions.id
+        WHERE acl.resource_id = ?
+        """,
+        [resource_id],
+    )
+    for row in acl_rows.rows:
+        group_name = row["group_name"]
+        action_name = row["action_name"]
+        if group_name not in permissions:
+            permissions[group_name] = {}
+        permissions[group_name][action_name] = True
+
+    return Response.html(
+        await datasette.render_template(
+            "table_acls.html",
+            {
+                "database_name": request.url_vars["database"],
+                "table_name": request.url_vars["table"],
+                "actions": [
+                    "insert-row",
+                    "delete-row",
+                    "update-row",
+                    "alter-table",
+                    "drop-table",
+                ],
+                "groups": groups,
+                "permissions": permissions,
+            },
+            request=request,
+        )
+    )
+
+
+@hookimpl
+def register_permissions(datasette):
+    return [
+        Permission(
+            name="datasette-acl",
+            abbr=None,
+            description="Configure permissions",
+            takes_database=False,
+            takes_resource=False,
+            default=False,
+        )
+    ]
+
+
+async def can_edit_permissions(datasette, actor):
+    return await datasette.permission_allowed(actor, "datasette-acl")
+
+
+@hookimpl
+def table_actions(datasette, actor, database, table):
+    async def inner():
+        if await can_edit_permissions(datasette, actor):
+            return [
+                {
+                    "href": datasette.urls.table(database, table) + "/-/acl",
+                    "label": "Manage table permissions",
+                    "description": "Control who can  write, and delete rows in this table",
+                }
+            ]
+
+    return inner
+
+
 @hookimpl
 def register_routes():
     return [
         ("^/-/acl$", debug_acl),
+        ("^/(?P<database>[^/]+)/(?P<table>[^/]+)/-/acl$", table_acls),
     ]

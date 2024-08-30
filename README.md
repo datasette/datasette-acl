@@ -46,7 +46,7 @@ plugins:
   datasette-acl:
     dynamic-groups:
       admin:
-        is_admin": true
+        is_admin: true
       sales:
         department: ["sales"]
 ```

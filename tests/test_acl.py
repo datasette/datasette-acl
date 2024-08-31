@@ -224,3 +224,11 @@ async def test_permission_allowed():
             "operation": "added",
         },
     ]
+    # Let's check the message it set
+    messages = datasette.unsign(response2.cookies["ds_messages"], "messages")
+    assert messages == [
+        [
+            "Added group 'admin' can alter-table, removed group 'admin' can insert-row",
+            1,
+        ]
+    ]

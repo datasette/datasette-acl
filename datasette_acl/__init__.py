@@ -384,7 +384,9 @@ async def table_acls(request, datasette):
                             "operation_by": request.actor["id"],
                         },
                     )
-        datasette.add_message(request, f"Made changes: {repr(changes_made)}")
+        if changes_made:
+            message = generate_changes_message(changes_made)
+            datasette.add_message(request, message)
         return Response.redirect(request.path)
 
     return Response.html(
@@ -406,6 +408,18 @@ async def table_acls(request, datasette):
             request=request,
         )
     )
+
+
+def generate_changes_message(changes_made):
+    messages = []
+    for action, changes in changes_made.items():
+        for group, permission in changes:
+            messages.append(f"{action} group '{group}' can {permission}")
+    if not messages:
+        return None
+    message = ", ".join(messages)
+    # Capitalize first letter
+    return message[0].upper() + message[1:]
 
 
 @hookimpl

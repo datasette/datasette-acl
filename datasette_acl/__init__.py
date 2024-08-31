@@ -256,10 +256,6 @@ def permission_allowed(datasette, actor, action, resource):
     return inner
 
 
-async def debug_acl(request, datasette):
-    return Response.json(list(datasette.permissions.items()), default=str)
-
-
 async def table_acls(request, datasette):
     if not await can_edit_permissions(datasette, request.actor):
         raise Forbidden("You do not have permission to edit permissions")
@@ -524,6 +520,5 @@ def track_event(datasette, event):
 @hookimpl
 def register_routes():
     return [
-        ("^/-/acl$", debug_acl),
         ("^/(?P<database>[^/]+)/(?P<table>[^/]+)/-/acl$", table_acls),
     ]

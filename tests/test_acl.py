@@ -212,6 +212,61 @@ async def ds():
                 },
             ],
         ),
+        ManageTableTest(
+            description="Existing user: remove insert-row, add update-row",
+            setup_post_data={
+                "new_actor_id": "newbie",
+                "new_user_insert-row": "on",
+            },
+            post_data={
+                "user_permissions_newbie_update-row": "on",
+            },
+            expected_acls=[
+                {
+                    "action_name": "update-row",
+                    "actor_id": "newbie",
+                    "database_name": "db",
+                    "group_name": None,
+                    "resource_name": "t",
+                }
+            ],
+            should_fail_then_succeed=[
+                dict(
+                    actor={"id": "newbie"},
+                    action="update-row",
+                    resource=["db", "t"],
+                ),
+            ],
+            expected_audit_rows=[
+                {
+                    "group_name": None,
+                    "actor_id": "newbie",
+                    "action_name": "insert-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                    "operation_by": "root",
+                    "operation": "added",
+                },
+                {
+                    "group_name": None,
+                    "actor_id": "newbie",
+                    "action_name": "insert-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                    "operation_by": "root",
+                    "operation": "removed",
+                },
+                {
+                    "group_name": None,
+                    "actor_id": "newbie",
+                    "action_name": "update-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                    "operation_by": "root",
+                    "operation": "added",
+                },
+            ],
+        ),
     ),
 )
 async def test_manage_table_permissions(

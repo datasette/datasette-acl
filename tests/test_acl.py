@@ -1,10 +1,71 @@
+from collections import namedtuple
 from datasette.app import Datasette
 from datasette_acl import update_dynamic_groups
 import pytest
 
+ManageTableTest = namedtuple(
+    "ManageTableTest",
+    (
+        "setup_post_data",
+        "post_data",
+        "expected_acls",
+        "before_should_fail",
+        "after_should_succeed",
+        "expected_audit_logs",
+    ),
+)
+
 
 @pytest.mark.asyncio
-async def test_table_permissions():
+@pytest.mark.parametrize(
+    "setup_post_data,post_data,expected_acls,expected_audit_logs",
+    (
+        ManageTableTest(
+            setup_post_data={},
+            post_data={"group_permissions_staff_insert-row": "on"},
+            expected_acls=[
+                {
+                    "group_name": "staff",
+                    "action_name": "insert-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                }
+            ],
+            before_should_fail=[
+                dict(
+                    actor={"id": "simon", "is_staff": True},
+                    action="insert-row",
+                    resource=["db", "t"],
+                ),
+            ],
+            after_should_succeed=[
+                dict(
+                    actor={"id": "simon", "is_staff": True},
+                    action="insert-row",
+                    resource=["db", "t"],
+                ),
+            ],
+            expected_audit_logs=[
+                {
+                    "group_name": "staff",
+                    "action_name": "insert-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                    "operation_by": "root",
+                    "operation": "added",
+                }
+            ],
+        ),
+    ),
+)
+async def test_manage_table_permissions(
+    setup_post_data,
+    post_data,
+    expected_acls,
+    before_should_fail,
+    after_should_succeed,
+    expected_audit_logs,
+):
     datasette = Datasette(
         config={
             "plugins": {
@@ -24,11 +85,12 @@ async def test_table_permissions():
     await datasette.invoke_startup()
     db = datasette.get_internal_database()
     staff_actor = {"id": "simon", "is_staff": True}
-    # That group should exist
+    # Staff dynamic group should have been created on startup
     group_id = (
         await db.execute("select id from acl_groups where name = 'staff'")
     ).single_value()
     assert group_id == 1
+    # Staff member should not yet be allowed to insert-row
     assert not await datasette.permission_allowed(
         actor=staff_actor, action="insert-row", resource=["db", "t"]
     )

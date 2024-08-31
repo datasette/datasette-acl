@@ -2,70 +2,23 @@ from collections import namedtuple
 from datasette.app import Datasette
 from datasette_acl import update_dynamic_groups
 import pytest
+import pytest_asyncio
 
 ManageTableTest = namedtuple(
     "ManageTableTest",
     (
+        "description",
         "setup_post_data",
         "post_data",
         "expected_acls",
-        "before_should_fail",
-        "after_should_succeed",
-        "expected_audit_logs",
+        "should_fail_then_succeed",
+        "expected_audit_rows",
     ),
 )
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ManageTableTest._fields,
-    (
-        ManageTableTest(
-            setup_post_data={},
-            post_data={"group_permissions_staff_insert-row": "on"},
-            expected_acls=[
-                {
-                    "group_name": "staff",
-                    "action_name": "insert-row",
-                    "database_name": "db",
-                    "resource_name": "t",
-                }
-            ],
-            before_should_fail=[
-                dict(
-                    actor={"id": "simon", "is_staff": True},
-                    action="insert-row",
-                    resource=["db", "t"],
-                ),
-            ],
-            after_should_succeed=[
-                dict(
-                    actor={"id": "simon", "is_staff": True},
-                    action="insert-row",
-                    resource=["db", "t"],
-                ),
-            ],
-            expected_audit_logs=[
-                {
-                    "group_name": "staff",
-                    "action_name": "insert-row",
-                    "database_name": "db",
-                    "resource_name": "t",
-                    "operation_by": "root",
-                    "operation": "added",
-                }
-            ],
-        ),
-    ),
-)
-async def test_manage_table_permissions(
-    setup_post_data,
-    post_data,
-    expected_acls,
-    before_should_fail,
-    after_should_succeed,
-    expected_audit_logs,
-):
+@pytest_asyncio.fixture
+async def ds():
     datasette = Datasette(
         config={
             "plugins": {
@@ -83,7 +36,194 @@ async def test_manage_table_permissions(
     db = datasette.add_memory_database("db")
     await db.execute_write("create table t (id primary key)")
     await datasette.invoke_startup()
+    yield datasette
+    # Need to manually drop because in-memory databases shared across tests
+    await db.execute_write("drop table t")
     internal_db = datasette.get_internal_database()
+    for table in await internal_db.table_names():
+        if table.startswith("acl"):
+            await internal_db.execute_write(f"drop table {table}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ManageTableTest._fields,
+    (
+        ManageTableTest(
+            description="Group: add insert-row",
+            setup_post_data={},
+            post_data={"group_permissions_staff_insert-row": "on"},
+            expected_acls=[
+                {
+                    "group_name": "staff",
+                    "actor_id": None,
+                    "action_name": "insert-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                }
+            ],
+            should_fail_then_succeed=[
+                dict(
+                    actor={"id": "simon", "is_staff": True},
+                    action="insert-row",
+                    resource=["db", "t"],
+                ),
+            ],
+            expected_audit_rows=[
+                {
+                    "group_name": "staff",
+                    "actor_id": None,
+                    "action_name": "insert-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                    "operation_by": "root",
+                    "operation": "added",
+                }
+            ],
+        ),
+        ManageTableTest(
+            description="Group: remove insert-row, add update-row and delete-row",
+            setup_post_data={"group_permissions_staff_insert-row": "on"},
+            post_data={
+                "group_permissions_staff_update-row": "on",
+                "group_permissions_staff_delete-row": "on",
+            },
+            expected_acls=[
+                {
+                    "group_name": "staff",
+                    "actor_id": None,
+                    "action_name": "delete-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                },
+                {
+                    "group_name": "staff",
+                    "actor_id": None,
+                    "action_name": "update-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                },
+            ],
+            should_fail_then_succeed=[
+                dict(
+                    actor={"id": "simon", "is_staff": True},
+                    action="delete-row",
+                    resource=["db", "t"],
+                ),
+                dict(
+                    actor={"id": "simon", "is_staff": True},
+                    action="update-row",
+                    resource=["db", "t"],
+                ),
+            ],
+            expected_audit_rows=[
+                {
+                    "group_name": "staff",
+                    "actor_id": None,
+                    "action_name": "insert-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                    "operation_by": "root",
+                    "operation": "added",
+                },
+                {
+                    "group_name": "staff",
+                    "actor_id": None,
+                    "action_name": "insert-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                    "operation_by": "root",
+                    "operation": "removed",
+                },
+                {
+                    "group_name": "staff",
+                    "actor_id": None,
+                    "action_name": "delete-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                    "operation_by": "root",
+                    "operation": "added",
+                },
+                {
+                    "group_name": "staff",
+                    "actor_id": None,
+                    "action_name": "update-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                    "operation_by": "root",
+                    "operation": "added",
+                },
+            ],
+        ),
+        ManageTableTest(
+            description="New user: set with insert-row and update-row",
+            setup_post_data={},
+            post_data={
+                "new_actor_id": "newbie",
+                "new_user_insert-row": "on",
+                "new_user_update-row": "on",
+            },
+            expected_acls=[
+                {
+                    "action_name": "insert-row",
+                    "actor_id": "newbie",
+                    "database_name": "db",
+                    "group_name": None,
+                    "resource_name": "t",
+                },
+                {
+                    "action_name": "update-row",
+                    "actor_id": "newbie",
+                    "database_name": "db",
+                    "group_name": None,
+                    "resource_name": "t",
+                },
+            ],
+            should_fail_then_succeed=[
+                dict(
+                    actor={"id": "newbie"},
+                    action="insert-row",
+                    resource=["db", "t"],
+                ),
+                dict(
+                    actor={"id": "newbie"},
+                    action="update-row",
+                    resource=["db", "t"],
+                ),
+            ],
+            expected_audit_rows=[
+                {
+                    "group_name": None,
+                    "actor_id": "newbie",
+                    "action_name": "insert-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                    "operation_by": "root",
+                    "operation": "added",
+                },
+                {
+                    "group_name": None,
+                    "actor_id": "newbie",
+                    "action_name": "update-row",
+                    "database_name": "db",
+                    "resource_name": "t",
+                    "operation_by": "root",
+                    "operation": "added",
+                },
+            ],
+        ),
+    ),
+)
+async def test_manage_table_permissions(
+    ds,
+    description,
+    setup_post_data,
+    post_data,
+    expected_acls,
+    should_fail_then_succeed,
+    expected_audit_rows,
+):
+    internal_db = ds.get_internal_database()
 
     # Staff dynamic group should have been created on startup
     assert (
@@ -92,46 +232,39 @@ async def test_manage_table_permissions(
         )
     ).single_value() == 1
 
+    csrf_token_response = await ds.client.get(
+        "/db/t/-/acl",
+        cookies={
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
+        },
+    )
+    csrftoken = csrf_token_response.cookies["ds_csrftoken"]
+
     if setup_post_data:
-        setup_response = await datasette.client.post(
+        setup_response = await ds.client.post(
             "/db/t/-/acl",
             data={**setup_post_data, "csrftoken": csrftoken},
             cookies={
-                "ds_actor": datasette.client.actor_cookie({"id": "root"}),
+                "ds_actor": ds.client.actor_cookie({"id": "root"}),
                 "ds_csrftoken": csrftoken,
             },
         )
         assert setup_response.status_code == 302
 
-    # Check before_should_fail conditions
-    for condition in before_should_fail:
-        assert not await datasette.permission_allowed(**condition)
-
-    assert (
-        await internal_db.execute("select count(*) from acl_audit")
-    ).single_value() == 0
+    # Permission checks should fail
+    for kwargs in should_fail_then_succeed:
+        assert not await ds.permission_allowed(**kwargs), f"Should have failed: {repr}"
 
     # Use the /db/table/-/acl page to update permissions
-    csrf_token_response = await datasette.client.get(
-        "/db/t/-/acl",
-        cookies={
-            "ds_actor": datasette.client.actor_cookie({"id": "root"}),
-        },
-    )
-    csrftoken = csrf_token_response.cookies["ds_csrftoken"]
-    response = await datasette.client.post(
+    response = await ds.client.post(
         "/db/t/-/acl",
         data={**post_data, "csrftoken": csrftoken},
         cookies={
-            "ds_actor": datasette.client.actor_cookie({"id": "root"}),
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
             "ds_csrftoken": csrftoken,
         },
     )
     assert response.status_code == 302
-
-    # Check after_should_succeed conditions
-    for condition in after_should_succeed:
-        assert await datasette.permission_allowed(**condition)
 
     # Check ACLs
     acls = [
@@ -141,11 +274,12 @@ async def test_manage_table_permissions(
                 """
         select
           acl_groups.name as group_name,
+          acl.actor_id,
           acl_actions.name as action_name,
           acl_resources.database as database_name,
           acl_resources.resource as resource_name
         from acl
-        join acl_groups on acl.group_id = acl_groups.id
+        left join acl_groups on acl.group_id = acl_groups.id
         join acl_actions on acl.action_id = acl_actions.id
         join acl_resources on acl.resource_id = acl_resources.id
     """
@@ -154,26 +288,30 @@ async def test_manage_table_permissions(
     ]
     assert acls == expected_acls
 
+    # Permission checks should pass now
+    for kwargs in should_fail_then_succeed:
+        assert await ds.permission_allowed(
+            **kwargs
+        ), f"Should have passed: {repr(kwargs)}"
+
     # Check audit logs
     AUDIT_SQL = """
         select
           acl_groups.name as group_name,
+          acl_audit.actor_id,
           acl_actions.name as action_name,
           acl_resources.database as database_name,
           acl_resources.resource as resource_name,
           acl_audit.operation_by,
           acl_audit.operation
         from acl_audit
-        join acl_groups on acl_audit.group_id = acl_groups.id
+        left join acl_groups on acl_audit.group_id = acl_groups.id
         join acl_actions on acl_audit.action_id = acl_actions.id
         join acl_resources on acl_audit.resource_id = acl_resources.id
         order by acl_audit.id
     """
     audit_rows = [dict(r) for r in (await internal_db.execute(AUDIT_SQL))]
-    assert audit_rows == expected_audit_logs
-
-    # Need to manually drop because in-memory databases shared across tests
-    await db.execute_write("drop table t")
+    assert audit_rows == expected_audit_rows
 
 
 @pytest.mark.asyncio

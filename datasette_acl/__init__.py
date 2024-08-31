@@ -3,7 +3,7 @@ from datasette.events import CreateTableEvent
 from datasette.utils import actor_matches_allow
 from datasette_acl.utils import can_edit_permissions
 from datasette_acl.views.table_acls import manage_table_acls
-from datasette_acl.views.groups import manage_groups
+from datasette_acl.views.groups import manage_groups, manage_group
 import json
 import sys
 import time
@@ -36,6 +36,17 @@ create table if not exists acl_actor_groups (
     foreign key (group_id) references acl_groups(id)
 );
 
+-- Group membership audit log
+create table if not exists acl_groups_audit (
+    id integer primary key,
+    timestamp text default (datetime('now')),
+    operation_by text,
+    operation text check (operation in ('added', 'removed')),
+    group_id integer,
+    actor_id text,
+    foreign key (group_id) references acl_groups(id)
+);
+
 create table if not exists acl (
     acl_id integer primary key,
     actor_id text,
@@ -49,7 +60,7 @@ create table if not exists acl (
     unique(actor_id, group_id, resource_id, action_id)
 );
 
--- Audit log
+-- ACL audit log
 create table if not exists acl_audit (
     id integer primary key,
     timestamp text default (datetime('now')),
@@ -343,4 +354,5 @@ def register_routes():
     return [
         ("^/(?P<database>[^/]+)/(?P<table>[^/]+)/-/acl$", manage_table_acls),
         ("^/-/acl/groups$", manage_groups),
+        ("^/-/acl/groups/(?P<name>[^/]+)$", manage_group),
     ]

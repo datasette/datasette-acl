@@ -269,46 +269,7 @@ async def table_acls(request, datasette):
         )
     ).single_value()
 
-    if request.method == "POST":
-        # Clear all existing ACLs
-        await internal_db.execute_write(
-            "DELETE FROM acl WHERE resource_id = ?", [resource_id]
-        )
-        changes_made = []
-        post_vars = await request.post_vars()
-        for group in groups:
-            for action in [
-                "insert-row",
-                "delete-row",
-                "update-row",
-                "alter-table",
-                "drop-table",
-            ]:
-                value = post_vars.get(f"permissions_{group}_{action}")
-                if value:
-                    await internal_db.execute_write(
-                        """
-                        INSERT INTO acl (actor_id, group_id, resource_id, action_id)
-                        VALUES (
-                            null,
-                            (SELECT id FROM acl_groups WHERE name = :group_name),
-                            :resource_id,
-                            (SELECT id FROM acl_actions WHERE name = :action_name)
-                        )
-                        """,
-                        {
-                            "group_name": group,
-                            "action_name": action,
-                            "resource_id": resource_id,
-                        },
-                    )
-                    changes_made.append(f"{group} {action}")
-
-        datasette.add_message(request, f"Made changes: {', '.join(changes_made)}")
-        return Response.redirect(request.path)
-
-    permissions = {}
-    # Read ACLs for this table
+    current_permissions = {}
     acl_rows = await internal_db.execute(
         """
         SELECT acl_groups.name as group_name, acl_actions.name as action_name
@@ -322,9 +283,67 @@ async def table_acls(request, datasette):
     for row in acl_rows.rows:
         group_name = row["group_name"]
         action_name = row["action_name"]
-        if group_name not in permissions:
-            permissions[group_name] = {}
-        permissions[group_name][action_name] = True
+        if group_name not in current_permissions:
+            current_permissions[group_name] = {}
+        current_permissions[group_name][action_name] = True
+
+    if request.method == "POST":
+        changes_made = {"added": [], "removed": []}
+        post_vars = await request.post_vars()
+        for group_name in groups:
+            for action_name in [
+                "insert-row",
+                "delete-row",
+                "update-row",
+                "alter-table",
+                "drop-table",
+            ]:
+                new_value = bool(
+                    post_vars.get(f"permissions_{group_name}_{action_name}")
+                )
+                current_value = bool(
+                    current_permissions.get(group_name, {}).get(action_name)
+                )
+                if new_value != current_value:
+                    if new_value:
+                        # They added it, add the record
+                        await internal_db.execute_write(
+                            """
+                            INSERT INTO acl (actor_id, group_id, resource_id, action_id)
+                            VALUES (
+                                null,
+                                (SELECT id FROM acl_groups WHERE name = :group_name),
+                                :resource_id,
+                                (SELECT id FROM acl_actions WHERE name = :action_name)
+                            )
+                            """,
+                            {
+                                "group_name": group_name,
+                                "action_name": action_name,
+                                "resource_id": resource_id,
+                            },
+                        )
+                        changes_made["added"].append((group_name, action_name))
+                    else:
+                        # They removed it
+                        await internal_db.execute_write(
+                            """
+                            DELETE FROM acl WHERE
+                                actor_id is null and 
+                                group_id = (SELECT id FROM acl_groups WHERE name = :group_name)
+                                and resource_id = :resource_id
+                                and action_id = (SELECT id FROM acl_actions WHERE name = :action_name)
+                            """,
+                            {
+                                "group_name": group_name,
+                                "action_name": action_name,
+                                "resource_id": resource_id,
+                            },
+                        )
+                        changes_made["removed"].append((group_name, action_name))
+
+        datasette.add_message(request, f"Made changes: {repr(changes_made)}")
+        return Response.redirect(request.path)
 
     return Response.html(
         await datasette.render_template(
@@ -340,7 +359,7 @@ async def table_acls(request, datasette):
                     "drop-table",
                 ],
                 "groups": groups,
-                "permissions": permissions,
+                "permissions": current_permissions,
             },
             request=request,
         )

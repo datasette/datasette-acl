@@ -4,89 +4,18 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_update_dynamic_groups():
+async def test_table_permissions():
     datasette = Datasette(
         config={
             "plugins": {
                 "datasette-acl": {
+                    # Users with is_staff: True are in staff group
                     "dynamic-groups": {
-                        "admin": {"is_admin": True},
-                    }
-                }
-            }
-        }
-    )
-    await datasette.invoke_startup()
-    db = datasette.get_internal_database()
-    # Should have those tables
-    tables = await db.table_names()
-    assert {
-        "acl_resources",
-        "acl_actions",
-        "acl_groups",
-        "acl_actor_groups",
-        "acl",
-    }.issubset(tables)
-    # Group tables should start populated
-    assert (await db.execute("select count(*) from acl_groups")).single_value() == 1
-    # But no actor groups
-    assert (
-        await db.execute("select count(*) from acl_actor_groups")
-    ).single_value() == 0
-    # An actor with is_admin: True should be added to the group
-    await update_dynamic_groups(
-        datasette, {"is_admin": True, "id": "admin"}, skip_cache=True
-    )
-    assert [dict(r) for r in (await db.execute("select * from acl_groups")).rows] == [
-        {"id": 1, "name": "admin"},
-    ]
-    assert [
-        dict(r)
-        for r in (
-            await db.execute(
-                "select actor_id, (select name from acl_groups where id = group_id) as group_name from acl_actor_groups"
-            )
-        ).rows
-    ] == [
-        {"actor_id": "admin", "group_name": "admin"},
-    ]
-    # If that user changes they should drop from the group
-    await update_dynamic_groups(
-        datasette, {"is_admin": False, "id": "admin"}, skip_cache=True
-    )
-    assert [
-        dict(r)
-        for r in (
-            await db.execute(
-                "select actor_id, (select name from acl_groups where id = group_id) as group_name from acl_actor_groups"
-            )
-        ).rows
-    ] == []
-    # Groups that are not dynamic should not be modified
-    await db.execute_write("insert into acl_groups (id, name) values (2, 'static')")
-    await db.execute_write(
-        "insert into acl_actor_groups (actor_id, group_id) values ('admin', 2)"
-    )
-    await update_dynamic_groups(
-        datasette, {"is_admin": False, "id": "admin"}, skip_cache=True
-    )
-    assert [dict(r) for r in (await db.execute("select * from acl_groups")).rows] == [
-        {"id": 1, "name": "admin"},
-        {"id": 2, "name": "static"},
-    ]
-
-
-@pytest.mark.asyncio
-async def test_permission_allowed():
-    datasette = Datasette(
-        config={
-            "plugins": {
-                "datasette-acl": {
-                    "dynamic-groups": {
-                        "admin": {"is_admin": True},
+                        "staff": {"is_staff": True},
                     }
                 }
             },
+            # Root user can edit permissions
             "permissions": {"datasette-acl": {"id": "root"}},
         }
     )
@@ -94,14 +23,14 @@ async def test_permission_allowed():
     await db.execute_write("create table t (id primary key)")
     await datasette.invoke_startup()
     db = datasette.get_internal_database()
-    admin_actor = {"id": "simon", "is_admin": True}
+    staff_actor = {"id": "simon", "is_staff": True}
     # That group should exist
     group_id = (
-        await db.execute("select id from acl_groups where name = 'admin'")
+        await db.execute("select id from acl_groups where name = 'staff'")
     ).single_value()
     assert group_id == 1
     assert not await datasette.permission_allowed(
-        actor=admin_actor, action="insert-row", resource=["db", "t"]
+        actor=staff_actor, action="insert-row", resource=["db", "t"]
     )
     # acl_audit table should be empty
     assert (await db.execute("select count(*) from acl_audit")).single_value() == 0
@@ -116,7 +45,7 @@ async def test_permission_allowed():
     response = await datasette.client.post(
         "/db/t/-/acl",
         data={
-            "group_permissions_admin_insert-row": "on",
+            "group_permissions_staff_insert-row": "on",
             "csrftoken": csrftoken,
         },
         cookies={
@@ -145,7 +74,7 @@ async def test_permission_allowed():
     ]
     assert acls == [
         {
-            "group_name": "admin",
+            "group_name": "staff",
             "action_name": "insert-row",
             "database_name": "db",
             "resource_name": "t",
@@ -169,7 +98,7 @@ async def test_permission_allowed():
     audit_rows = [dict(r) for r in (await db.execute(AUDIT_SQL))]
     assert audit_rows == [
         {
-            "group_name": "admin",
+            "group_name": "staff",
             "action_name": "insert-row",
             "database_name": "db",
             "resource_name": "t",
@@ -177,9 +106,9 @@ async def test_permission_allowed():
             "operation": "added",
         }
     ]
-    # Now the admin actor should be able to insert a row
+    # Now the staff actor should be able to insert a row
     assert await datasette.permission_allowed(
-        actor=admin_actor,
+        actor=staff_actor,
         action="insert-row",
         resource=["db", "t"],
     )
@@ -187,7 +116,7 @@ async def test_permission_allowed():
     response2 = await datasette.client.post(
         "/db/t/-/acl",
         data={
-            "group_permissions_admin_alter-table": "on",
+            "group_permissions_staff_alter-table": "on",
             "csrftoken": csrftoken,
         },
         cookies={
@@ -199,7 +128,7 @@ async def test_permission_allowed():
     audit_rows2 = [dict(r) for r in (await db.execute(AUDIT_SQL))]
     assert audit_rows2 == [
         {
-            "group_name": "admin",
+            "group_name": "staff",
             "action_name": "insert-row",
             "database_name": "db",
             "resource_name": "t",
@@ -207,7 +136,7 @@ async def test_permission_allowed():
             "operation": "added",
         },
         {
-            "group_name": "admin",
+            "group_name": "staff",
             "action_name": "insert-row",
             "database_name": "db",
             "resource_name": "t",
@@ -215,7 +144,7 @@ async def test_permission_allowed():
             "operation": "removed",
         },
         {
-            "group_name": "admin",
+            "group_name": "staff",
             "action_name": "alter-table",
             "database_name": "db",
             "resource_name": "t",
@@ -227,9 +156,82 @@ async def test_permission_allowed():
     messages = datasette.unsign(response2.cookies["ds_messages"], "messages")
     assert messages == [
         [
-            "Added: group 'admin' can alter-table, removed: group 'admin' can insert-row",
+            "Added: group 'staff' can alter-table, removed: group 'staff' can insert-row",
             1,
         ]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_dynamic_groups():
+    datasette = Datasette(
+        config={
+            "plugins": {
+                "datasette-acl": {
+                    "dynamic-groups": {
+                        "staff": {"is_staff": True},
+                    }
+                }
+            }
+        }
+    )
+    await datasette.invoke_startup()
+    db = datasette.get_internal_database()
+    # Should have those tables
+    tables = await db.table_names()
+    assert {
+        "acl_resources",
+        "acl_actions",
+        "acl_groups",
+        "acl_actor_groups",
+        "acl",
+    }.issubset(tables)
+    # Group tables should start populated
+    assert (await db.execute("select count(*) from acl_groups")).single_value() == 1
+    # But no actor groups
+    assert (
+        await db.execute("select count(*) from acl_actor_groups")
+    ).single_value() == 0
+    # An actor with is_staff: True should be added to the group
+    await update_dynamic_groups(
+        datasette, {"is_staff": True, "id": "staff"}, skip_cache=True
+    )
+    assert [dict(r) for r in (await db.execute("select * from acl_groups")).rows] == [
+        {"id": 1, "name": "staff"},
+    ]
+    assert [
+        dict(r)
+        for r in (
+            await db.execute(
+                "select actor_id, (select name from acl_groups where id = group_id) as group_name from acl_actor_groups"
+            )
+        ).rows
+    ] == [
+        {"actor_id": "staff", "group_name": "staff"},
+    ]
+    # If that user changes they should drop from the group
+    await update_dynamic_groups(
+        datasette, {"is_staff": False, "id": "staff"}, skip_cache=True
+    )
+    assert [
+        dict(r)
+        for r in (
+            await db.execute(
+                "select actor_id, (select name from acl_groups where id = group_id) as group_name from acl_actor_groups"
+            )
+        ).rows
+    ] == []
+    # Groups that are not dynamic should not be modified
+    await db.execute_write("insert into acl_groups (id, name) values (2, 'static')")
+    await db.execute_write(
+        "insert into acl_actor_groups (actor_id, group_id) values ('staff', 2)"
+    )
+    await update_dynamic_groups(
+        datasette, {"is_staff": False, "id": "staff"}, skip_cache=True
+    )
+    assert [dict(r) for r in (await db.execute("select * from acl_groups")).rows] == [
+        {"id": 1, "name": "staff"},
+        {"id": 2, "name": "static"},
     ]
 
 

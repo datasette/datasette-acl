@@ -101,3 +101,35 @@ To run the tests:
 ```bash
 python -m pytest
 ```
+
+### Tips for local development
+
+Here's how to run the plugin with all of its features enabled.
+
+First, grab a test database:
+```bash
+wget https://latest.datasette.io/fixtures.db
+```
+Install the [datasette-unsafe-actor-debug](https://github.com/datasette/datasette-unsafe-actor-debug) plugin, so you can use the `http://127.0.0.1:8001/-/unsafe-actor` page to quickly imitate any actor for testing purposes:
+```bash
+datasette install datasette-unsafe-actor-debug
+```
+Then start Datasette like this:
+```bash
+datasette fixtures.db --internal internal.db \
+  -s permissions.datasette-acl.id root \
+  -s plugins.datasette-unsafe-actor-debug.enabled 1 \
+  -s plugins.datasette-acl.table-creator-permissions '["insert-row", "update-row"]' \
+  -s plugins.datasette-acl.dynamic-groups.staff.is_staff true \
+  --root \
+  --secret 1 \
+  --reload \
+  --pdb
+```
+This configures Datasette to provide a URL for you to sign in as root, which will give you access to the permission editing tool.
+
+It ensures that any user who creates a table (which you can test using the `/-/api` API explorer tool) will be granted initial `insert-row` and `update-row` permissions.
+
+It sets up a dynamic group such that any actor with `{"is_staff": true}` in their JSON will be treated as a member of that group.
+
+`--reload` means Datasette will reload on any code changes to the plugin, `--secret 1` ensures your Datasette authentication cookies will continue to work across server restarts, and `--pdb` will open a debugger any time Datasette hits an error.

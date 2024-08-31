@@ -91,7 +91,7 @@
     {% for entry in audit_log %}
       <tr>
         <td>{{ entry.timestamp }}</td>
-        <td>{{ entry.operation_by }}</td>
+        <td>{{ entry.operation_by or '*dynamic*' }}</td>
         <td>{{ entry.operation }}</td>
         <td>{{ entry.actor_id or '' }}</td>
       </tr>

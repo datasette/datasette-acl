@@ -387,10 +387,12 @@ async def test_update_dynamic_groups():
     # Should have those tables
     tables = await db.table_names()
     assert {
-        "acl_resources",
         "acl_actions",
-        "acl_groups",
         "acl_actor_groups",
+        "acl_audit",
+        "acl_groups_audit",
+        "acl_groups",
+        "acl_resources",
         "acl",
     }.issubset(tables)
     # Group tables should start populated
@@ -406,6 +408,28 @@ async def test_update_dynamic_groups():
     assert [dict(r) for r in (await db.execute("select * from acl_groups")).rows] == [
         {"id": 1, "name": "staff"},
     ]
+    # Should record an added groups audit record
+    assert (
+        [
+            dict(r)
+            for r in (
+                await db.execute(
+                    """
+            select operation, operation_by, group_id, actor_id
+            from acl_groups_audit
+        """
+                )
+            ).rows
+        ]
+        == [
+            {
+                "operation": "added",
+                "operation_by": None,
+                "group_id": 1,
+                "actor_id": "staff",
+            },
+        ]
+    )
     assert [
         dict(r)
         for r in (
@@ -428,6 +452,28 @@ async def test_update_dynamic_groups():
             )
         ).rows
     ] == []
+    # Should record a removed groups audit record
+    assert (
+        [
+            dict(r)
+            for r in (
+                await db.execute(
+                    """
+            select operation, operation_by, group_id, actor_id
+            from acl_groups_audit order by id desc limit 1
+        """
+                )
+            ).rows
+        ]
+        == [
+            {
+                "operation": "removed",
+                "operation_by": None,
+                "group_id": 1,
+                "actor_id": "staff",
+            },
+        ]
+    )
     # Groups that are not dynamic should not be modified
     await db.execute_write("insert into acl_groups (id, name) values (2, 'static')")
     await db.execute_write(

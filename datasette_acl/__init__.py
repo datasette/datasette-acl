@@ -233,9 +233,26 @@ async def update_dynamic_groups(datasette, actor, skip_cache=False):
             insert into acl_actor_groups (
                 actor_id, group_id
             ) values (
-                :actor_id, (select id from acl_groups where name = :group_name)
+                :actor_id,
+                (select id from acl_groups where name = :group_name)
             )""",
             {"actor_id": actor["id"], "group_name": group_name},
+        )
+        await db.execute_write(
+            """
+            insert into acl_groups_audit (
+                operation_by, operation, group_id, actor_id
+            ) values (
+                null,
+                'added',
+                (select id from acl_groups where name = :group_name),
+                :actor_id
+            )
+        """,
+            {
+                "group_name": group_name,
+                "actor_id": actor["id"],
+            },
         )
     for group_name in should_remove:
         await db.execute_write(
@@ -245,6 +262,22 @@ async def update_dynamic_groups(datasette, actor, skip_cache=False):
             and group_id = (select id from acl_groups where name = :group_name)
             """,
             {"actor_id": actor["id"], "group_name": group_name},
+        )
+        await db.execute_write(
+            """
+            insert into acl_groups_audit (
+                operation_by, operation, group_id, actor_id
+            ) values (
+                null,
+                'removed',
+                (select id from acl_groups where name = :group_name),
+                :actor_id
+            )
+        """,
+            {
+                "group_name": group_name,
+                "actor_id": actor["id"],
+            },
         )
 
 

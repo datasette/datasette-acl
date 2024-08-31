@@ -2,7 +2,7 @@ from collections import namedtuple
 from datasette.app import Datasette
 from datasette_acl import update_dynamic_groups
 import pytest
-import pytest_asyncio
+
 
 ManageTableTest = namedtuple(
     "ManageTableTest",
@@ -476,7 +476,7 @@ async def test_table_creator_permissions():
         }
     )
     await datasette.invoke_startup()
-    db = datasette.add_memory_database("db")
+    datasette.add_memory_database("db")
     # Create a table
     actor_cookie = datasette.client.actor_cookie({"id": "simon"})
     create_response = await datasette.client.post(

@@ -26,6 +26,9 @@ async def ds():
     db = datasette.add_memory_database("db")
     await db.execute_write("create table t (id primary key)")
     await datasette.invoke_startup()
+    await datasette.get_internal_database().execute_write(
+        "insert into acl_groups (name) values (:name)", {"name": "dev"}
+    )
     yield datasette
     # Need to manually drop because in-memory databases shared across tests
     await db.execute_write("drop table t")
@@ -33,3 +36,5 @@ async def ds():
     for table in await internal_db.table_names():
         if table.startswith("acl"):
             await internal_db.execute_write(f"drop table {table}")
+    for table in await db.table_names():
+        await db.execute_write(f"drop table {table}")

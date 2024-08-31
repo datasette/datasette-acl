@@ -104,6 +104,8 @@ async def test_permission_allowed():
         actor=admin_actor, action="insert-row", resource=["db", "t"]
     )
     assert not allowed
+    # acl_audit table should be empty
+    assert (await db.execute("select count(*) from acl_audit")).single_value() == 0
     # Use the /db/table/-/acl page to insert a permission
     csrf_token_response = await datasette.client.get(
         "/db/t/-/acl",
@@ -150,9 +152,75 @@ async def test_permission_allowed():
             "resource_name": "t",
         }
     ]
-    allowed = await datasette.permission_allowed(
+    # Should have added to the audit table
+    AUDIT_SQL = """
+        select
+          acl_groups.name as group_name,
+          acl_actions.name as action_name,
+          acl_resources.database as database_name,
+          acl_resources.resource as resource_name,
+          acl_audit.operation_by,
+          acl_audit.operation
+        from acl_audit
+        join acl_groups on acl_audit.group_id = acl_groups.id
+        join acl_actions on acl_audit.action_id = acl_actions.id
+        join acl_resources on acl_audit.resource_id = acl_resources.id
+        order by acl_audit.id
+    """
+    audit_rows = [dict(r) for r in (await db.execute(AUDIT_SQL))]
+    assert audit_rows == [
+        {
+            "group_name": "admin",
+            "action_name": "insert-row",
+            "database_name": "db",
+            "resource_name": "t",
+            "operation_by": "root",
+            "operation": "added",
+        }
+    ]
+    # Now the admin actor should be able to insert a row
+    assert await datasette.permission_allowed(
         actor=admin_actor,
         action="insert-row",
         resource=["db", "t"],
     )
-    assert allowed
+    # remove insert-row and add alter-table and check the audit log
+    response2 = await datasette.client.post(
+        "/db/t/-/acl",
+        data={
+            "permissions_admin_alter-table": "on",
+            "csrftoken": csrftoken,
+        },
+        cookies={
+            "ds_actor": datasette.client.actor_cookie({"id": "root"}),
+            "ds_csrftoken": csrftoken,
+        },
+    )
+    assert response2.status_code == 302
+    audit_rows2 = [dict(r) for r in (await db.execute(AUDIT_SQL))]
+    assert audit_rows2 == [
+        {
+            "group_name": "admin",
+            "action_name": "insert-row",
+            "database_name": "db",
+            "resource_name": "t",
+            "operation_by": "root",
+            "operation": "added",
+        },
+        {
+            "group_name": "admin",
+            "action_name": "insert-row",
+            "database_name": "db",
+            "resource_name": "t",
+            "operation_by": "root",
+            "operation": "removed",
+        },
+        {
+            "group_name": "admin",
+            "action_name": "alter-table",
+            "database_name": "db",
+            "resource_name": "t",
+            "operation_by": "root",
+            "operation": "added",
+        },
+    ]

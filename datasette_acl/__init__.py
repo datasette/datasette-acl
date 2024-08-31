@@ -5,20 +5,20 @@ import json
 
 CREATE_TABLES_SQL = """
 create table if not exists acl_resources (
-    id integer primary key autoincrement,
+    id integer primary key,
     database text not null,
     resource text,
     unique(database, resource)
 );
 
 create table if not exists acl_actions (
-    id integer primary key autoincrement,
+    id integer primary key,
     name text not null unique
 );
 
 -- new table for groups
 create table if not exists acl_groups (
-    id integer primary key autoincrement,
+    id integer primary key,
     name text not null unique
 );
 
@@ -31,7 +31,7 @@ create table if not exists acl_actor_groups (
 );
 
 create table if not exists acl (
-    acl_id integer primary key autoincrement,
+    acl_id integer primary key,
     actor_id text,
     group_id integer,
     resource_id integer,
@@ -42,6 +42,21 @@ create table if not exists acl (
     check ((actor_id is null) != (group_id is null)),
     unique(actor_id, group_id, resource_id, action_id)
 );
+
+-- Audit log
+create table if not exists acl_audit (
+    id integer primary key,
+    timestamp text default (datetime('now')),
+    operation_by text,
+    operation text check (operation in ('added', 'removed')),
+    action_id integer,
+    resource_id integer,
+    group_id integer,
+    actor_id text,
+    foreign key (group_id) references acl_groups(id),
+    foreign key (resource_id) references acl_resources(id),
+    foreign key (action_id) references acl_actions(id)
+)
 """
 
 ACL_RESOURCE_PAIR_SQL = """
@@ -323,6 +338,7 @@ async def table_acls(request, datasette):
                                 "resource_id": resource_id,
                             },
                         )
+                        operation = "added"
                         changes_made["added"].append((group_name, action_name))
                     else:
                         # They removed it
@@ -340,8 +356,34 @@ async def table_acls(request, datasette):
                                 "resource_id": resource_id,
                             },
                         )
+                        operation = "removed"
                         changes_made["removed"].append((group_name, action_name))
-
+                    await internal_db.execute_write(
+                        """
+                        insert into acl_audit (
+                            operation,
+                            actor_id,
+                            group_id,
+                            resource_id,
+                            action_id,
+                            operation_by
+                        ) values (
+                            :operation,
+                            null,
+                            (SELECT id FROM acl_groups WHERE name = :group_name),
+                            :resource_id,
+                            (SELECT id FROM acl_actions WHERE name = :action_name),
+                            :operation_by
+                        )
+                        """,
+                        {
+                            "operation": operation,
+                            "group_name": group_name,
+                            "resource_id": resource_id,
+                            "action_name": action_name,
+                            "operation_by": request.actor["id"],
+                        },
+                    )
         datasette.add_message(request, f"Made changes: {repr(changes_made)}")
         return Response.redirect(request.path)
 

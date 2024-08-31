@@ -114,6 +114,10 @@ Install the [datasette-unsafe-actor-debug](https://github.com/datasette/datasett
 ```bash
 datasette install datasette-unsafe-actor-debug
 ```
+And [datasette-visible-internal-db](https://github.com/datasette/datasette-visible-internal-db) to make it easy to see what's going on in the internal database:
+```bash
+datasette install datasette-visible-internal-db
+```
 Then start Datasette like this:
 ```bash
 datasette fixtures.db --internal internal.db \

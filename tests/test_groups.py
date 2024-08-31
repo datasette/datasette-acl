@@ -44,7 +44,7 @@ async def test_manage_table_permissions(
     internal_db = ds.get_internal_database()
 
     csrf_token_response = await ds.client.get(
-        "/-/acl/groups",
+        "/-/acl/groups/dev",
         cookies={
             "ds_actor": ds.client.actor_cookie({"id": "root"}),
         },
@@ -74,17 +74,7 @@ async def test_manage_table_permissions(
     assert response.status_code == 302
 
     # Check group members
-    group_members = {
-        d["actor_id"]
-        for d in (
-            await internal_db.execute(
-                """
-        select actor_id from acl_actor_groups
-        where group_id = (select id from acl_groups where name = 'dev')
-    """
-            )
-        ).rows
-    }
+    group_members = await get_group_members(internal_db, "dev")
     assert group_members == expected_members
 
     # Check audit logs
@@ -97,3 +87,44 @@ async def test_manage_table_permissions(
     """
     audit_rows = [dict(r) for r in (await internal_db.execute(AUDIT_SQL))]
     assert audit_rows == expected_audit_rows
+
+
+@pytest.mark.asyncio
+async def test_cannot_edit_dynamic_group(ds):
+    db = ds.get_internal_database()
+    csrf_token_response = await ds.client.get(
+        "/-/acl/groups/staff",
+        cookies={
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
+        },
+    )
+    assert csrf_token_response.status_code == 200
+    csrftoken = csrf_token_response.cookies["ds_csrftoken"]
+
+    # Adding to dev should work, adding to staff should fail
+    for group in ("staff", "dev"):
+        await ds.client.post(
+            f"/-/acl/groups/{group}",
+            data={"add": "tony2", "csrftoken": csrftoken},
+            cookies={
+                "ds_actor": ds.client.actor_cookie({"id": "root"}),
+                "ds_csrftoken": csrftoken,
+            },
+        )
+    assert await get_group_members(db, "staff") == set()
+    assert await get_group_members(db, "dev") == {"tony2"}
+
+
+async def get_group_members(db, group):
+    return {
+        d["actor_id"]
+        for d in (
+            await db.execute(
+                """
+        select actor_id from acl_actor_groups
+        where group_id = (select id from acl_groups where name = ?)
+    """,
+                [group],
+            )
+        ).rows
+    }

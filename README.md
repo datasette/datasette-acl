@@ -123,8 +123,7 @@ datasette fixtures.db --internal internal.db \
   -s plugins.datasette-acl.dynamic-groups.staff.is_staff true \
   --root \
   --secret 1 \
-  --reload \
-  --pdb
+  --reload
 ```
 This configures Datasette to provide a URL for you to sign in as root, which will give you access to the permission editing tool.
 
@@ -132,4 +131,4 @@ It ensures that any user who creates a table (which you can test using the `/-/a
 
 It sets up a dynamic group such that any actor with `{"is_staff": true}` in their JSON will be treated as a member of that group.
 
-`--reload` means Datasette will reload on any code changes to the plugin, `--secret 1` ensures your Datasette authentication cookies will continue to work across server restarts, and `--pdb` will open a debugger any time Datasette hits an error.
+`--reload` means Datasette will reload on any code changes to the plugin, and `--secret 1` ensures your Datasette authentication cookies will continue to work across server restarts.

@@ -116,7 +116,7 @@ async def test_permission_allowed():
     response = await datasette.client.post(
         "/db/t/-/acl",
         data={
-            "permissions_admin_insert-row": "on",
+            "group_permissions_admin_insert-row": "on",
             "csrftoken": csrftoken,
         },
         cookies={
@@ -187,7 +187,7 @@ async def test_permission_allowed():
     response2 = await datasette.client.post(
         "/db/t/-/acl",
         data={
-            "permissions_admin_alter-table": "on",
+            "group_permissions_admin_alter-table": "on",
             "csrftoken": csrftoken,
         },
         cookies={

@@ -8,10 +8,11 @@
 <p><a href=" {{ urls.table(database_name, table_name) }}">Back to table</a></p>
 
 <form action="{{ request.path }}" method="post">
+{% if groups %}
 <table>
   <thead>
-    <tr>
-      <th>Group</th>
+    <tr style="font-weight: bold;">
+      <th>Groups</th>
       {% for action in actions %}
         <th>{{ action }}</th>
       {% endfor %}
@@ -22,12 +23,40 @@
       <tr>
         <td>{{ group }}</td>
         {% for action in actions %}
-          <td><label style="display: block"><input type="checkbox" name="permissions_{{ group }}_{{ action }}" {% if permissions and permissions.get(group, {}).get(action) %}checked{% endif %}></label></td>
+          <td><label style="display: block"><input type="checkbox" name="group_permissions_{{ group }}_{{ action }}" {% if group_permissions and group_permissions.get(group, {}).get(action) %}checked{% endif %}></label></td>
         {% endfor %}
       </tr>
     {% endfor %}
   </tbody>
+{% else %}
+<table>
+{% endif %}
+  <thead>
+    <tr style="font-weight: bold;">
+      <th>Users</th>
+      {% for action in actions %}
+        <th>{{ action }}</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for user in user_permissions %}
+      <tr>
+        <td>{{ user }}</td>
+        {% for action in actions %}
+          <td><label style="display: block"><input type="checkbox" name="user_permissions_{{ user }}_{{ action }}" {% if user_permissions and user_permissions.get(user, {}).get(action) %}checked{% endif %}></label></td>
+        {% endfor %}
+      </tr>
+    {% endfor %}
+    <tr>
+      <td><label for="id_new_actor_id" style="display: block; font-size: 0.7em">Add another user:</label><input style="width: 8em" id="id_new_actor_id" name="new_actor_id"></td>
+      {% for action in actions %}
+        <td><label style="padding-top: 0.9em; display: block"><input type="checkbox" name="new_user_{{ action }}"></label></td>
+      {% endfor %}
+    </tr>
+  </tbody>
 </table>
+
 <p style="margin-top: 1em">
   <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
   <input type="submit" value="Save changes">
@@ -38,10 +67,11 @@
 <table>
   <thead>
     <tr>
-      <th>Timestamp</th>
-      <th>Operation By</th>
+      <th>Date and time</th>
+      <th>Operation by</th>
       <th>Operation</th>
       <th>Group</th>
+      <th>User</th>
       <th>Action</th>
     </tr>
   </thead>
@@ -51,7 +81,8 @@
         <td>{{ entry.timestamp }}</td>
         <td>{{ entry.operation_by }}</td>
         <td>{{ entry.operation }}</td>
-        <td>{{ entry.group_name }}</td>
+        <td>{{ entry.group_name or '' }}</td>
+        <td>{{ entry.actor_id or '' }}</td>
         <td>{{ entry.action_name }}</td>
       </tr>
     {% endfor %}

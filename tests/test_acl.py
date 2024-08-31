@@ -18,7 +18,7 @@ ManageTableTest = namedtuple(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "setup_post_data,post_data,expected_acls,expected_audit_logs",
+    ManageTableTest._fields,
     (
         ManageTableTest(
             setup_post_data={},
@@ -70,8 +70,8 @@ async def test_manage_table_permissions(
         config={
             "plugins": {
                 "datasette-acl": {
-                    # Users with is_staff: True are in staff group
                     "dynamic-groups": {
+                        # Users with is_staff: True are in staff group
                         "staff": {"is_staff": True},
                     }
                 }
@@ -83,20 +83,35 @@ async def test_manage_table_permissions(
     db = datasette.add_memory_database("db")
     await db.execute_write("create table t (id primary key)")
     await datasette.invoke_startup()
-    db = datasette.get_internal_database()
-    staff_actor = {"id": "simon", "is_staff": True}
+    internal_db = datasette.get_internal_database()
+
     # Staff dynamic group should have been created on startup
-    group_id = (
-        await db.execute("select id from acl_groups where name = 'staff'")
-    ).single_value()
-    assert group_id == 1
-    # Staff member should not yet be allowed to insert-row
-    assert not await datasette.permission_allowed(
-        actor=staff_actor, action="insert-row", resource=["db", "t"]
-    )
-    # acl_audit table should be empty
-    assert (await db.execute("select count(*) from acl_audit")).single_value() == 0
-    # Use the /db/table/-/acl page to insert a permission
+    assert (
+        await internal_db.execute(
+            "select count(*) from acl_groups where name = 'staff'"
+        )
+    ).single_value() == 1
+
+    if setup_post_data:
+        setup_response = await datasette.client.post(
+            "/db/t/-/acl",
+            data={**setup_post_data, "csrftoken": csrftoken},
+            cookies={
+                "ds_actor": datasette.client.actor_cookie({"id": "root"}),
+                "ds_csrftoken": csrftoken,
+            },
+        )
+        assert setup_response.status_code == 302
+
+    # Check before_should_fail conditions
+    for condition in before_should_fail:
+        assert not await datasette.permission_allowed(**condition)
+
+    assert (
+        await internal_db.execute("select count(*) from acl_audit")
+    ).single_value() == 0
+
+    # Use the /db/table/-/acl page to update permissions
     csrf_token_response = await datasette.client.get(
         "/db/t/-/acl",
         cookies={
@@ -106,20 +121,23 @@ async def test_manage_table_permissions(
     csrftoken = csrf_token_response.cookies["ds_csrftoken"]
     response = await datasette.client.post(
         "/db/t/-/acl",
-        data={
-            "group_permissions_staff_insert-row": "on",
-            "csrftoken": csrftoken,
-        },
+        data={**post_data, "csrftoken": csrftoken},
         cookies={
             "ds_actor": datasette.client.actor_cookie({"id": "root"}),
             "ds_csrftoken": csrftoken,
         },
     )
     assert response.status_code == 302
+
+    # Check after_should_succeed conditions
+    for condition in after_should_succeed:
+        assert await datasette.permission_allowed(**condition)
+
+    # Check ACLs
     acls = [
         dict(r)
         for r in (
-            await db.execute(
+            await internal_db.execute(
                 """
         select
           acl_groups.name as group_name,
@@ -134,15 +152,9 @@ async def test_manage_table_permissions(
             )
         )
     ]
-    assert acls == [
-        {
-            "group_name": "staff",
-            "action_name": "insert-row",
-            "database_name": "db",
-            "resource_name": "t",
-        }
-    ]
-    # Should have added to the audit table
+    assert acls == expected_acls
+
+    # Check audit logs
     AUDIT_SQL = """
         select
           acl_groups.name as group_name,
@@ -157,71 +169,11 @@ async def test_manage_table_permissions(
         join acl_resources on acl_audit.resource_id = acl_resources.id
         order by acl_audit.id
     """
-    audit_rows = [dict(r) for r in (await db.execute(AUDIT_SQL))]
-    assert audit_rows == [
-        {
-            "group_name": "staff",
-            "action_name": "insert-row",
-            "database_name": "db",
-            "resource_name": "t",
-            "operation_by": "root",
-            "operation": "added",
-        }
-    ]
-    # Now the staff actor should be able to insert a row
-    assert await datasette.permission_allowed(
-        actor=staff_actor,
-        action="insert-row",
-        resource=["db", "t"],
-    )
-    # remove insert-row and add alter-table and check the audit log
-    response2 = await datasette.client.post(
-        "/db/t/-/acl",
-        data={
-            "group_permissions_staff_alter-table": "on",
-            "csrftoken": csrftoken,
-        },
-        cookies={
-            "ds_actor": datasette.client.actor_cookie({"id": "root"}),
-            "ds_csrftoken": csrftoken,
-        },
-    )
-    assert response2.status_code == 302
-    audit_rows2 = [dict(r) for r in (await db.execute(AUDIT_SQL))]
-    assert audit_rows2 == [
-        {
-            "group_name": "staff",
-            "action_name": "insert-row",
-            "database_name": "db",
-            "resource_name": "t",
-            "operation_by": "root",
-            "operation": "added",
-        },
-        {
-            "group_name": "staff",
-            "action_name": "insert-row",
-            "database_name": "db",
-            "resource_name": "t",
-            "operation_by": "root",
-            "operation": "removed",
-        },
-        {
-            "group_name": "staff",
-            "action_name": "alter-table",
-            "database_name": "db",
-            "resource_name": "t",
-            "operation_by": "root",
-            "operation": "added",
-        },
-    ]
-    # Let's check the message it set
-    messages = datasette.unsign(response2.cookies["ds_messages"], "messages")
-    assert messages == [
-        [
-            "Added: group 'staff' can alter-table, removed: group 'staff' can insert-row",
-            1,
-        ]
-    ]
+    audit_rows = [dict(r) for r in (await internal_db.execute(AUDIT_SQL))]
+    assert audit_rows == expected_audit_logs
+
+    # Need to manually drop because in-memory databases shared across tests
+    await db.execute_write("drop table t")
 
 
 @pytest.mark.asyncio

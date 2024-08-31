@@ -25,6 +25,10 @@ order by
 """
 
 
+def get_dynamic_groups(datasette):
+    config = datasette.plugin_config("datasette-acl")
+    return config.get("dynamic-groups") or {}
+
 
 async def manage_groups(request, datasette):
     if not await can_edit_permissions(datasette, request.actor):
@@ -34,11 +38,17 @@ async def manage_groups(request, datasette):
         dict(r, actor_ids=json.loads(r["actor_ids"]))
         for r in await internal_db.execute(GROUPS_SQL.format(extra_where=""))
     ]
+    dynamic_groups = get_dynamic_groups(datasette)
     return Response.html(
         await datasette.render_template(
             "manage_acl_groups.html",
             {
                 "groups": groups,
+                "dynamic_groups": dynamic_groups,
+            },
+            request=request,
+        )
+    )
 
 
 async def manage_group(request, datasette):

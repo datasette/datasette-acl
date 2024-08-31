@@ -7,10 +7,17 @@
 <h1>Groups</h1>
 
 {% for group in groups %}
-<h3><a href="{{ urls.path("/-/acl/groups/" + group.name)}}">{{ group.name }}</a> ({{ group.size }})</h3>
+<h3>
+  <a href="{{ urls.path("/-/acl/groups/" + group.name)}}">{{ group.name }}</a>
+  ({{ group.size }})
+  {% if dynamic_groups.get(group.name) %} <strong>dynamic</strong>{% endif %}
+</h3>
 <p>{{ ', '.join(group.actor_ids) }}</p>
-{% if not group.actor_ids %}
+{% if not group.actor_ids and not dynamic_groups.get(group.name) %}
   <p><em>No members</em></p>
+{% endif %}
+{% if dynamic_groups.get(group.name) %}
+  <p>Users matching: <code>{{ dynamic_groups[group.name]|tojson }}</code></p>
 {% endif %}
 {% endfor %}
 

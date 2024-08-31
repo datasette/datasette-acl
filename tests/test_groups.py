@@ -26,6 +26,16 @@ ManageGroupTest = namedtuple(
                 {"operation_by": "root", "operation": "added", "actor_id": "terry"}
             ],
         ),
+        ManageGroupTest(
+            description="Remove user from group",
+            setup_post_data={"add": "terry"},
+            post_data={"remove": "terry"},
+            expected_members=set(),
+            expected_audit_rows=[
+                {"operation_by": "root", "operation": "removed", "actor_id": "terry"},
+                {"operation_by": "root", "operation": "added", "actor_id": "terry"},
+            ],
+        ),
     ),
 )
 async def test_manage_table_permissions(

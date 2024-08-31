@@ -510,6 +510,24 @@ async def table_acls(request, datasette):
         [resource_id],
     )
 
+    # group_sizes dictionary for displaying their sizes
+    group_sizes = {
+        row["name"]: row["size"]
+        for row in await internal_db.execute(
+            """
+            select
+                acl_groups.name as name,
+                count(acl_actor_groups.actor_id) as size
+            from
+                acl_groups
+            left join
+                acl_actor_groups on acl_groups.id = acl_actor_groups.group_id
+            group by
+                acl_groups.id, acl_groups.name
+            """
+        )
+    }
+
     return Response.html(
         await datasette.render_template(
             "table_acls.html",
@@ -524,6 +542,7 @@ async def table_acls(request, datasette):
                     "drop-table",
                 ],
                 "groups": groups,
+                "group_sizes": group_sizes,
                 "group_permissions": current_group_permissions,
                 "user_permissions": current_user_permissions,
                 "audit_log": audit_log.rows,

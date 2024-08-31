@@ -518,3 +518,21 @@ async def test_table_creator_permissions():
     assert not await datasette.permission_allowed(
         actor={"id": "simon"}, action="update-row", resource=["db", "new_table"]
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("should_work", (True, False))
+async def test_table_actions(ds, should_work):
+    response = await ds.client.get(
+        "/db/t",
+        cookies={
+            "ds_actor": ds.client.actor_cookie(
+                {"id": "root" if should_work else "other"}
+            ),
+        },
+    )
+    fragment = '<a href="/db/t/-/acl">Manage table permissions'
+    if should_work:
+        assert fragment in response.text
+    else:
+        assert fragment not in response.text

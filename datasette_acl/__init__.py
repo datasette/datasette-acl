@@ -1,7 +1,7 @@
 from datasette import hookimpl, Response, Permission, Forbidden
 from datasette.events import CreateTableEvent
 from datasette.utils import actor_matches_allow
-from datasette_acl.views.table_acls import manage_table_acls
+from datasette_acl.views.table_acls import manage_table_acls, can_edit_permissions
 import json
 import sys
 import time

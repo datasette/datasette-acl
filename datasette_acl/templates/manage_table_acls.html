@@ -10,6 +10,7 @@
   margin-top: 10px;
   opacity: 0;
   transition: opacity 0.2s ease-in-out;
+  padding-left: 0.8em;
 }
 #needs-save-message.visible {
   opacity: 1;
@@ -71,11 +72,11 @@
     </tr>
   </tbody>
 </table>
-<div id="needs-save-message"></div>
 
 <p style="margin-top: 1em">
   <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
   <input type="submit" value="Save changes">
+  <span id="needs-save-message"></span>
 </p>
 </form>
 {% if audit_log %}

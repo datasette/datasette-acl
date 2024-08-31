@@ -33,4 +33,30 @@
   <input type="submit" value="Save changes">
 </p>
 </form>
+{% if audit_log %}
+<h2>Audit history</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Timestamp</th>
+      <th>Operation By</th>
+      <th>Operation</th>
+      <th>Group</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for entry in audit_log %}
+      <tr>
+        <td>{{ entry.timestamp }}</td>
+        <td>{{ entry.operation_by }}</td>
+        <td>{{ entry.operation }}</td>
+        <td>{{ entry.group_name }}</td>
+        <td>{{ entry.action_name }}</td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
 {% endblock %}

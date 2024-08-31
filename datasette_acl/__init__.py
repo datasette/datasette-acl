@@ -389,6 +389,24 @@ async def table_acls(request, datasette):
             datasette.add_message(request, message)
         return Response.redirect(request.path)
 
+    audit_log = await internal_db.execute(
+        """
+        select
+            acl_audit.timestamp,
+            acl_audit.operation_by,
+            acl_audit.operation,
+            acl_groups.name as group_name,
+            acl_actions.name as action_name
+        from acl_audit
+        join acl_groups on acl_audit.group_id = acl_groups.id
+        join acl_actions on acl_audit.action_id = acl_actions.id
+        where acl_audit.resource_id = ?
+        order by acl_audit.timestamp desc
+        limit 50
+        """,
+        [resource_id],
+    )
+
     return Response.html(
         await datasette.render_template(
             "table_acls.html",
@@ -404,6 +422,7 @@ async def table_acls(request, datasette):
                 ],
                 "groups": groups,
                 "permissions": current_permissions,
+                "audit_log": audit_log.rows,
             },
             request=request,
         )

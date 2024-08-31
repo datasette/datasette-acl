@@ -223,7 +223,7 @@ def permission_allowed(datasette, actor, action, resource):
 
     async def inner():
         if not actor:
-            return False
+            return None
         await update_dynamic_groups(datasette, actor)
         db = datasette.get_internal_database()
         result = await db.execute(

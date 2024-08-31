@@ -53,6 +53,23 @@ plugins:
 
 Any time an actor has their permissions checked they will be dynamically added to or removed from these groups based on the current value of their actor attributes.
 
+### Table creator permissions
+
+If you allow regular users to create tables in Datasette, you may want them to maintain a level of "ownership" over those tables, such that other users are unable to modify those tables without the creator's permission.
+
+The `table-creator-permissions' setting can be used to automatically configure permissions for the actor who created a table.
+
+Enable that like this:
+```yaml
+plugins:
+  datasette-acl:
+    table-creator-permissions:
+    - alter-table
+    - drop-table
+    - insert-row
+    - update-row
+    - delete-row
+```
 ## Development
 
 To set up this plugin locally, first checkout the code. Then create a new virtual environment:

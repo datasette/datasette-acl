@@ -100,10 +100,9 @@ async def test_permission_allowed():
         await db.execute("select id from acl_groups where name = 'admin'")
     ).single_value()
     assert group_id == 1
-    allowed = await datasette.permission_allowed(
+    assert not await datasette.permission_allowed(
         actor=admin_actor, action="insert-row", resource=["db", "t"]
     )
-    assert not allowed
     # acl_audit table should be empty
     assert (await db.execute("select count(*) from acl_audit")).single_value() == 0
     # Use the /db/table/-/acl page to insert a permission
@@ -232,3 +231,81 @@ async def test_permission_allowed():
             1,
         ]
     ]
+
+
+@pytest.mark.asyncio
+async def test_table_creator_permissions():
+    datasette = Datasette(
+        config={
+            "plugins": {
+                "datasette-acl": {
+                    "table-creator-permissions": [
+                        "insert-row",
+                        "delete-row",
+                    ]
+                }
+            },
+            "permissions": {"create-table": {"id": "*"}},
+        }
+    )
+    await datasette.invoke_startup()
+    db = datasette.add_memory_database("db")
+    # Create a table
+    actor_cookie = datasette.client.actor_cookie({"id": "simon"})
+    create_response = await datasette.client.post(
+        "/db/-/create",
+        json={
+            "table": "new_table",
+            "columns": [
+                {"name": "id", "type": "integer"},
+                {"name": "title", "type": "text"},
+            ],
+            "pk": "id",
+        },
+        cookies={"ds_actor": actor_cookie},
+    )
+    assert create_response.status_code == 201
+    # That table should have insert-row and delete-row ACLs
+    acls = [
+        dict(r)
+        for r in (
+            await datasette.get_internal_database().execute(
+                """
+        select
+          acl.actor_id,
+          acl_actions.name as action_name,
+          acl_resources.database as database_name,
+          acl_resources.resource as resource_name
+        from acl
+        join acl_actions on acl.action_id = acl_actions.id
+        join acl_resources on acl.resource_id = acl_resources.id
+        where acl_resources.database = 'db'
+        and acl_resources.resource = 'new_table'
+    """
+            )
+        )
+    ]
+    assert acls == [
+        {
+            "actor_id": "simon",
+            "action_name": "insert-row",
+            "database_name": "db",
+            "resource_name": "new_table",
+        },
+        {
+            "actor_id": "simon",
+            "action_name": "delete-row",
+            "database_name": "db",
+            "resource_name": "new_table",
+        },
+    ]
+    # Permission checks too
+    assert await datasette.permission_allowed(
+        actor={"id": "simon"}, action="insert-row", resource=["db", "new_table"]
+    )
+    assert await datasette.permission_allowed(
+        actor={"id": "simon"}, action="delete-row", resource=["db", "new_table"]
+    )
+    assert not await datasette.permission_allowed(
+        actor={"id": "simon"}, action="update-row", resource=["db", "new_table"]
+    )

@@ -1,4 +1,5 @@
 from datasette import hookimpl, Response, Permission, Forbidden
+from datasette.events import CreateTableEvent
 from datasette.utils import actor_matches_allow
 import time
 import json
@@ -470,6 +471,52 @@ def table_actions(datasette, actor, database, table):
                     "description": "Control who can  write, and delete rows in this table",
                 }
             ]
+
+    return inner
+
+
+@hookimpl
+def track_event(datasette, event):
+    async def inner():
+        config = datasette.plugin_config("datasette-acl") or {}
+        if not config.get("table-creator-permissions"):
+            return
+        if not isinstance(event, CreateTableEvent):
+            return
+        if not event.actor:
+            return
+        # Add ACLs for the user who created the table
+        db = datasette.get_internal_database()
+        # Ensure resource exists for table
+        await db.execute_write(
+            "INSERT OR IGNORE INTO acl_resources (database, resource) VALUES (?, ?);",
+            [event.database, event.table],
+        )
+        resource_id = (
+            await db.execute(
+                "SELECT id FROM acl_resources WHERE database = ? AND resource = ?",
+                [event.database, event.table],
+            )
+        ).single_value()
+        await db.execute_write_many(
+            """
+            INSERT INTO acl (actor_id, group_id, resource_id, action_id)
+            VALUES (
+                :actor_id,
+                null,
+                :resource_id,
+                (SELECT id FROM acl_actions WHERE name = :action_name)
+            )
+            """,
+            [
+                {
+                    "actor_id": event.actor["id"],
+                    "action_name": action_name,
+                    "resource_id": resource_id,
+                }
+                for action_name in config["table-creator-permissions"]
+            ],
+        )
 
     return inner
 

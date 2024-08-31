@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}Groups{% endblock %}
+
+
+{% block content %}
+<h1>Groups</h1>
+
+{% for group in groups %}
+<h3><a href="{{ urls.path("/-/acl/groups/" + group.name)}}">{{ group.name }}</a> ({{ group.size }})</h3>
+<p>{{ ', '.join(group.actor_ids) }}</p>
+{% if not group.actor_ids %}
+  <p><em>No members</em></p>
+{% endif %}
+{% endfor %}
+
+{% endblock %}

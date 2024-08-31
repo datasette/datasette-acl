@@ -1,7 +1,9 @@
-from datasette import hookimpl, Response, Permission, Forbidden
+from datasette import hookimpl, Permission
 from datasette.events import CreateTableEvent
 from datasette.utils import actor_matches_allow
-from datasette_acl.views.table_acls import manage_table_acls, can_edit_permissions
+from datasette_acl.utils import can_edit_permissions
+from datasette_acl.views.table_acls import manage_table_acls
+from datasette_acl.views.groups import manage_groups
 import json
 import sys
 import time
@@ -340,4 +342,5 @@ def track_event(datasette, event):
 def register_routes():
     return [
         ("^/(?P<database>[^/]+)/(?P<table>[^/]+)/-/acl$", manage_table_acls),
+        ("^/-/acl/groups$", manage_groups),
     ]

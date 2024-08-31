@@ -50,6 +50,16 @@ datasette mydata.db --root --internal internal.db \
   -s permissions.datasette-acl.id root
 ```
 
+### User groups
+
+Users can be assigned to groups, and those groups can then be used to quickly assign permissions to all of those users at once.
+
+To manage your groups, visit `/-/acl/groups` or use the "Manage user groups" item in the Datasette application menu.
+
+Add users to a group by typing in their actor ID. Remove them using the provided remove button.
+
+The page for each group includes an audit log showing changes made to that group's list of members.
+
 ### Dynamic groups
 
 You may wish to define permission rules against groups of actors based on their actor attributes, without needing to manually add those actors to a group. This can be achieved by defining a dynamic group in the `datasette-acl` configuration.
@@ -67,6 +77,8 @@ plugins:
 ```
 
 Any time an actor has their permissions checked they will be dynamically added to or removed from these groups based on the current value of their actor attributes.
+
+Dynamic groups are displayed in the list of groups, but their members cannot be manually added or removed.
 
 ### Table creator permissions
 

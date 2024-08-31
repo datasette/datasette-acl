@@ -66,8 +66,10 @@ async def manage_group(request, datasette):
     ).first()
     if not group:
         raise NotFound("Group does not exist")
+    dynamic_groups = get_dynamic_groups(datasette)
+    dynamic_config = dynamic_groups.get(name)
     actor_ids = json.loads(group["actor_ids"])
-    if request.method == "POST":
+    if request.method == "POST" and not dynamic_config:
         post_vars = await request.post_vars()
         to_add = post_vars.get("add")
         to_remove = post_vars.get("remove")
@@ -135,6 +137,7 @@ async def manage_group(request, datasette):
                 "name": name,
                 "size": group["size"],
                 "members": actor_ids,
+                "dynamic_config": dynamic_config,
                 "audit_log": [
                     dict(r)
                     for r in await internal_db.execute(

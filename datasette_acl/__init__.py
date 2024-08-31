@@ -383,6 +383,20 @@ def track_event(datasette, event):
 
 
 @hookimpl
+def menu_links(datasette, actor):
+    async def inner():
+        if await can_edit_permissions(datasette, actor):
+            return [
+                {
+                    "href": datasette.urls.path("/-/acl/groups"),
+                    "label": "Manage user groups",
+                }
+            ]
+
+    return inner
+
+
+@hookimpl
 def register_routes():
     return [
         ("^/(?P<database>[^/]+)/(?P<table>[^/]+)/-/acl$", manage_table_acls),

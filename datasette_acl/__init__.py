@@ -1,8 +1,10 @@
 from datasette import hookimpl, Response, Permission, Forbidden
 from datasette.events import CreateTableEvent
 from datasette.utils import actor_matches_allow
-import time
 import json
+import sys
+import time
+
 
 CREATE_TABLES_SQL = """
 create table if not exists acl_resources (
@@ -240,7 +242,9 @@ def permission_allowed(datasette, actor, action, resource):
     async def inner():
         if not actor:
             return None
-        await update_dynamic_groups(datasette, actor)
+        await update_dynamic_groups(
+            datasette, actor, skip_cache=hasattr(sys, "_pytest_running")
+        )
         db = datasette.get_internal_database()
         result = await db.execute(
             ACL_RESOURCE_PAIR_SQL,

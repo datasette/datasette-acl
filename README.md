@@ -15,9 +15,25 @@ datasette install datasette-acl
 ```
 ## Usage
 
-This plugin is under active development. For the moment, it only supports defining permissions for tables against dynamic groups, described below.
+This plugin is under active development. It currently only supports configuring [permissions](https://docs.datasette.io/en/latest/authentication.html#permissions) for individual tables, controlling the following:
+
+- `insert-row`
+- `delete-row`
+- `update-row`
+- `alter-table`
+- `drop-table`
 
 Permissions are saved in the internal database. This means you should run Datasette with the `--internal path/to/internal.db` option, otherwise your permissions will be reset every time you restart Datasette.
+
+### Managing permissions for a table
+
+The interface for configuring table permissions lives at `/database-name/table-name/-/acl`. It can be accessed from the table actions menu on the table page.
+
+Permission can be granted for each of the above table actions. They can be assigned to both groups and individual users, who can be added using their `actor["id"]`.
+
+An audit log tracks which permissions were added and removed, displayed at the bottom of the table permissions page.
+
+### Controlling who can edit permissions
 
 Users with the new `datasette-acl` permission will have the ability to access a UI for setting permissions for groups on a table.
 
@@ -33,7 +49,6 @@ Alternatively you can start Datasette running like this:
 datasette mydata.db --root --internal internal.db \
   -s permissions.datasette-acl.id root
 ```
-
 
 ### Dynamic groups
 

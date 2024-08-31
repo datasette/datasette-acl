@@ -2,6 +2,21 @@
 
 {% block title %}Permissions for {{ database_name }}/{{ table_name }}{% endblock %}
 
+{% block extra_head %}
+<style>
+#needs-save-message { 
+  color: rgb(249, 114, 114);
+  font-weight: bold;
+  margin-top: 10px;
+  opacity: 0;
+  transition: opacity 0.2s ease-in-out;
+}
+#needs-save-message.visible {
+  opacity: 1;
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <h1>Permissions for {{ database_name }}/{{ table_name }}</h1>
 
@@ -56,6 +71,7 @@
     </tr>
   </tbody>
 </table>
+<div id="needs-save-message"></div>
 
 <p style="margin-top: 1em">
   <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
@@ -89,5 +105,44 @@
   </tbody>
 </table>
 {% endif %}
+
+<script>
+// "You have unsaved changes" message
+const initialState = {};
+const checkboxes = document.querySelectorAll('table input[type="checkbox"]');
+const messageElement = document.getElementById("needs-save-message");
+
+function updateInitialState() {
+  checkboxes.forEach((checkbox) => {
+    initialState[checkbox.name] = checkbox.checked;
+  });
+}
+
+function hasStateChanged() {
+  return Array.from(checkboxes).some(
+    (checkbox) => initialState[checkbox.name] !== checkbox.checked,
+  );
+}
+
+function updateMessage() {
+  if (hasStateChanged()) {
+    messageElement.textContent = "You have unsaved changes";
+    messageElement.classList.add("visible");
+  } else {
+    messageElement.classList.remove("visible");
+    setTimeout(() => {
+      if (!hasStateChanged()) {
+        messageElement.textContent = "";
+      }
+    }, 500);
+  }
+}
+
+updateInitialState();
+
+checkboxes.forEach((checkbox) => {
+  checkbox.addEventListener("change", updateMessage);
+});
+</script>
 
 {% endblock %}

@@ -2,7 +2,6 @@
 
 {% block title %}Groups{% endblock %}
 
-
 {% block content %}
 <h1>Groups</h1>
 
@@ -20,5 +19,12 @@
   <p>Users matching: <code>{{ dynamic_groups[group.name]|tojson }}</code></p>
 {% endif %}
 {% endfor %}
+
+<h2>Create a group</h2>
+
+<form action="{{ request.path }}" method="post">
+  <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+  <p><label>Group name <input type="text" name="new_group"></label> <input type="submit" value="Create group"></p>
+</form>
 
 {% endblock %}

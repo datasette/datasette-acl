@@ -155,3 +155,102 @@ async def test_deleted_group(ds):
     )
     assert page_response.status_code == 200
     assert "has been deleted" in page_response.text
+
+
+@pytest.mark.asyncio
+async def test_create_delete_group(ds):
+    csrf_token_response = await ds.client.get(
+        "/-/acl/groups",
+        cookies={
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
+        },
+    )
+    csrftoken = csrf_token_response.cookies["ds_csrftoken"]
+    internal_db = ds.get_internal_database()
+
+    # Create a group
+    create_group_response = await ds.client.post(
+        "/-/acl/groups",
+        data={"new_group": "sales", "csrftoken": csrftoken},
+        cookies={
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
+            "ds_csrftoken": csrftoken,
+        },
+    )
+    assert create_group_response.status_code == 302
+    assert create_group_response.headers["location"] == "/-/acl/groups/sales"
+
+    async def get_members():
+        return {
+            r[0]
+            for r in (
+                await internal_db.execute(
+                    """
+            select actor_id
+            from acl_actor_groups
+            where group_id = (select id from acl_groups where name = 'sales')
+        """
+                )
+            )
+        }
+
+    assert await get_members() == set()
+
+    # Add sally, sam and paulo
+    for actor_id in ("sally", "sam", "paulo"):
+        add_response = await ds.client.post(
+            f"/-/acl/groups/sales",
+            data={"add": actor_id, "csrftoken": csrftoken},
+            cookies={
+                "ds_actor": ds.client.actor_cookie({"id": "root"}),
+                "ds_csrftoken": csrftoken,
+            },
+        )
+        assert add_response.status_code == 302
+        assert add_response.headers["location"] == "/-/acl/groups/sales#focus-add"
+    # Check the group has those members
+    assert await get_members() == {"sally", "sam", "paulo"}
+    # Deleting this group should first remove the members
+    delete_group_response = await ds.client.post(
+        "/-/acl/groups/sales",
+        data={"delete_group": "1", "csrftoken": csrftoken},
+        cookies={
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
+            "ds_csrftoken": csrftoken,
+        },
+    )
+    assert delete_group_response.status_code == 302
+    assert delete_group_response.headers["location"] == "/-/acl/groups"
+
+    assert await get_members() == set()
+
+    # Should be marked as deleted
+    assert (
+        await internal_db.execute("select deleted from acl_groups where name = 'sales'")
+    ).single_value() == 1
+
+    # Check the audit log
+    audit_rows = [
+        dict(r)
+        for r in (
+            await internal_db.execute(
+                """
+        select
+          operation_by, operation, actor_id
+        from acl_groups_audit
+        where group_id = (select id from acl_groups where name = 'sales')
+        order by id desc
+    """
+            )
+        )
+    ]
+    assert audit_rows == [
+        {"operation_by": "root", "operation": "deleted", "actor_id": None},
+        {"operation_by": "root", "operation": "removed", "actor_id": "paulo"},
+        {"operation_by": "root", "operation": "removed", "actor_id": "sam"},
+        {"operation_by": "root", "operation": "removed", "actor_id": "sally"},
+        {"operation_by": "root", "operation": "added", "actor_id": "paulo"},
+        {"operation_by": "root", "operation": "added", "actor_id": "sam"},
+        {"operation_by": "root", "operation": "added", "actor_id": "sally"},
+        {"operation_by": "root", "operation": "created", "actor_id": None},
+    ]

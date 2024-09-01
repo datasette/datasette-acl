@@ -60,6 +60,8 @@ Add users to a group by typing in their actor ID. Remove them using the provided
 
 The page for each group includes an audit log showing changes made to that group's list of members.
 
+When you delete a group its members will all be removed and it will be marked as deleted. Creating a group with the same name will reuse that group's record and display its existing audit log, but will not re-add the members that were removed.
+
 ### Dynamic groups
 
 You may wish to define permission rules against groups of actors based on their actor attributes, without needing to manually add those actors to a group. This can be achieved by defining a dynamic group in the `datasette-acl` configuration.

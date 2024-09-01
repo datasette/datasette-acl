@@ -13,9 +13,10 @@
   border-radius: 5px;
   cursor: pointer;
   transition: all 0.2s ease;
+}
+.remove-button-margin-left {
   margin-left: 2em;
 }
-
 .remove-button:hover {
   background-color: #ffc4c4;
   border-color: #ff3333;
@@ -63,19 +64,20 @@
 <table>
   {% for member in members %}
   <tr>
-    <td>{{ member }}</td><td><button name="remove" value="{{ member }}" class="remove-button">Remove {{ member }}</button></td>
+    <td>{{ member }}</td><td><button name="remove" value="{{ member }}" class="remove-button remove-button-margin-left">Remove {{ member }}</button></td>
   </tr>
   {% endfor %}
 </table>
 {% endif %}
 </form>
-
+{% if not is_deleted %}
 <h2>Add a member</h2>
 
 <form action="{{ request.path }}" method="post">
   <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
   <p><label>User ID <input type="text" name="add"></label> <input type="submit" value="Add member"></p>
 </form>
+{% endif %}
 {% endif %}
 
 {% if audit_log %}
@@ -100,6 +102,13 @@
     {% endfor %}
   </tbody>
 </table>
+{% endif %}
+
+{% if not is_deleted and not dynamic_config %}
+  <form action="{{ request.path }}" method="post" style="margin-top: 1em">
+    <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+    <p><button name="delete_group" value="1" class="remove-button">Delete this group</button></p>
+  </form>
 {% endif %}
 
 <script>

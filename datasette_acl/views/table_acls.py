@@ -1,5 +1,9 @@
 from datasette import Response, Forbidden
-from datasette_acl.utils import can_edit_permissions, generate_changes_message
+from datasette_acl.utils import (
+    can_edit_permissions,
+    generate_changes_message,
+    validate_actor_id,
+)
 
 
 async def manage_table_acls(request, datasette):
@@ -142,6 +146,10 @@ async def manage_table_acls(request, datasette):
                 actor_id = (post_vars.get("new_actor_id") or "").strip()
                 if not actor_id:
                     continue
+                if not await validate_actor_id(datasette, actor_id):
+                    datasette.add_message(
+                        request, "That user ID is not valid", datasette.ERROR
+                    )
                 post_key_prefix = "new_user"
             else:
                 post_key_prefix = f"user_permissions_{actor_id}"

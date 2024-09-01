@@ -1,5 +1,5 @@
 from datasette import Response, Forbidden, NotFound
-from datasette_acl.utils import can_edit_permissions
+from datasette_acl.utils import can_edit_permissions, validate_actor_id
 import json
 import re
 
@@ -201,6 +201,10 @@ async def manage_group(request, datasette):
                 )
             else:
                 # Add user
+                if not await validate_actor_id(datasette, to_add):
+                    datasette.add_message(
+                        request, "That user ID is not valid", datasette.ERROR
+                    )
                 await internal_db.execute_write(
                     """
                     insert into acl_actor_groups (actor_id, group_id)

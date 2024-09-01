@@ -86,7 +86,7 @@ Dynamic groups are displayed in the list of groups, but their members cannot be 
 
 If you allow regular users to create tables in Datasette, you may want them to maintain a level of "ownership" over those tables, such that other users are unable to modify those tables without the creator's permission.
 
-The `table-creator-permissions' setting can be used to automatically configure permissions for the actor who created a table.
+The `table-creator-permissions` plugin setting can be used to automatically configure permissions for the actor who created a table.
 
 Enable that like this:
 ```yaml

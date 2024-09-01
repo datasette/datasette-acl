@@ -24,6 +24,12 @@
 <p><a href=" {{ urls.table(database_name, table_name) }}">Back to table</a></p>
 
 <form action="{{ request.path }}" method="post">
+{% if valid_actor_ids %}
+  <datalist id="actor-ids">{% for actor_id in valid_actor_ids %}
+    <option value="{{ actor_id }}"></option>
+  {% endfor %}
+  </datalist>
+{% endif %}
 {% if groups %}
 <table>
   <thead>
@@ -65,7 +71,7 @@
       </tr>
     {% endfor %}
     <tr>
-      <td><label for="id_new_actor_id" style="display: block; font-size: 0.7em">Add another user:</label><input style="width: 8em" id="id_new_actor_id" name="new_actor_id"></td>
+      <td><label for="id_new_actor_id" style="display: block; font-size: 0.7em">Add another user:</label><input data-1p-ignore{% if valid_actor_ids %} list="actor-ids"{% endif %} style="width: 8em" id="id_new_actor_id" name="new_actor_id"></td>
       {% for action in actions %}
         <td><label style="padding-top: 0.9em; display: block"><input type="checkbox" name="new_user_{{ action }}"></label></td>
       {% endfor %}

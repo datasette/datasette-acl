@@ -75,7 +75,13 @@
 
 <form action="{{ request.path }}" method="post">
   <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
-  <p><label>User ID <input type="text" name="add"></label> <input type="submit" value="Add member"></p>
+  <p><label>User ID <input type="text" data-1p-ignore name="add"{% if valid_actor_ids %} list="actor-ids"{% endif %}></label> <input type="submit" value="Add member"></p>
+  {% if valid_actor_ids %}
+    <datalist id="actor-ids">{% for actor_id in valid_actor_ids %}
+      <option value="{{ actor_id }}"></option>
+    {% endfor %}
+    </datalist>
+  {% endif %}
 </form>
 {% endif %}
 {% endif %}

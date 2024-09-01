@@ -39,18 +39,15 @@ ManageGroupTest = namedtuple(
     ),
 )
 async def test_manage_table_permissions(
-    ds, description, setup_post_data, post_data, expected_members, expected_audit_rows
+    ds,
+    csrftoken,
+    description,
+    setup_post_data,
+    post_data,
+    expected_members,
+    expected_audit_rows,
 ):
     internal_db = ds.get_internal_database()
-
-    csrf_token_response = await ds.client.get(
-        "/-/acl/groups/dev",
-        cookies={
-            "ds_actor": ds.client.actor_cookie({"id": "root"}),
-        },
-    )
-    assert csrf_token_response.status_code == 200
-    csrftoken = csrf_token_response.cookies["ds_csrftoken"]
 
     if setup_post_data:
         setup_response = await ds.client.post(
@@ -90,16 +87,8 @@ async def test_manage_table_permissions(
 
 
 @pytest.mark.asyncio
-async def test_cannot_edit_dynamic_group(ds):
+async def test_cannot_edit_dynamic_group(ds, csrftoken):
     db = ds.get_internal_database()
-    csrf_token_response = await ds.client.get(
-        "/-/acl/groups/staff",
-        cookies={
-            "ds_actor": ds.client.actor_cookie({"id": "root"}),
-        },
-    )
-    assert csrf_token_response.status_code == 200
-    csrftoken = csrf_token_response.cookies["ds_csrftoken"]
 
     # Adding to dev should work, adding to staff should fail
     for group in ("staff", "dev"):
@@ -158,14 +147,7 @@ async def test_deleted_group(ds):
 
 
 @pytest.mark.asyncio
-async def test_create_delete_group(ds):
-    csrf_token_response = await ds.client.get(
-        "/-/acl/groups",
-        cookies={
-            "ds_actor": ds.client.actor_cookie({"id": "root"}),
-        },
-    )
-    csrftoken = csrf_token_response.cookies["ds_csrftoken"]
+async def test_create_delete_group(ds, csrftoken):
     internal_db = ds.get_internal_database()
 
     # Create a group

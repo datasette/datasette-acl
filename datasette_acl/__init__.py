@@ -159,7 +159,7 @@ def startup(datasette):
             [{"name": n} for n in datasette.permissions.keys()],
         )
         # And any dynamic groups
-        config = datasette.plugin_config("datasette-acl")
+        config = datasette.plugin_config("datasette-acl") or {}
         groups = config.get("dynamic-groups")
         if groups:
             await db.execute_write_many(
@@ -199,7 +199,7 @@ async def update_dynamic_groups(datasette, actor, skip_cache=False):
         # Don't do this more than once a second per actor
         return
     one_second_cache.set(actor["id"], 1)
-    config = datasette.plugin_config("datasette-acl")
+    config = datasette.plugin_config("datasette-acl") or {}
     groups = config.get("dynamic-groups")
     if not groups:
         return

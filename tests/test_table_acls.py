@@ -243,6 +243,7 @@ ManageTableTest = namedtuple(
 )
 async def test_manage_table_permissions(
     ds,
+    csrftoken,
     description,
     setup_post_data,
     post_data,
@@ -258,14 +259,6 @@ async def test_manage_table_permissions(
             "select count(*) from acl_groups where name = 'staff'"
         )
     ).single_value() == 1
-
-    csrf_token_response = await ds.client.get(
-        "/db/t/-/acl",
-        cookies={
-            "ds_actor": ds.client.actor_cookie({"id": "root"}),
-        },
-    )
-    csrftoken = csrf_token_response.cookies["ds_csrftoken"]
 
     if setup_post_data:
         setup_response = await ds.client.post(

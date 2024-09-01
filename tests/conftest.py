@@ -38,3 +38,14 @@ async def ds():
             await internal_db.execute_write(f"drop table {table}")
     for table in await db.table_names():
         await db.execute_write(f"drop table {table}")
+
+
+@pytest_asyncio.fixture
+async def csrftoken(ds):
+    csrf_token_response = await ds.client.get(
+        "/db/t/-/acl",
+        cookies={
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
+        },
+    )
+    return csrf_token_response.cookies["ds_csrftoken"]

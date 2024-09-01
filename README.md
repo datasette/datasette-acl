@@ -9,7 +9,7 @@ Advanced permission management for Datasette. **Highly experimental**.
 
 ## Installation
 
-Install this plugin in the same environment as Datasette.
+Install this plugin in the same environment as Datasette. This plugin requires Datasette 1.0a15 or higher.
 ```bash
 datasette install datasette-acl
 ```
@@ -35,7 +35,7 @@ An audit log tracks which permissions were added and removed, displayed at the b
 
 ### Controlling who can edit permissions
 
-Users with the new `datasette-acl` permission will have the ability to access a UI for setting permissions for groups on a table.
+Users with the new `datasette-acl` permission will have the ability to access a UI for setting permissions for users and groups on a table.
 
 To configure the root user to have this permission, add the following to your Datasette configuration:
 
@@ -56,7 +56,7 @@ Users can be assigned to groups, and those groups can then be used to quickly as
 
 To manage your groups, visit `/-/acl/groups` or use the "Manage user groups" item in the Datasette application menu.
 
-Add users to a group by typing in their actor ID. Remove them using the provided remove button.
+Add users to a group by typing in their actor ID. Remove them using the remove user button.
 
 The page for each group includes an audit log showing changes made to that group's list of members.
 
@@ -66,7 +66,7 @@ When you delete a group its members will all be removed and it will be marked as
 
 You may wish to define permission rules against groups of actors based on their actor attributes, without needing to manually add those actors to a group. This can be achieved by defining a dynamic group in the `datasette-acl` configuration.
 
-Dynamic groups are defined in terms of [allow blocks](https://docs.datasette.io/en/stable/authentication.html#defining-permissions-with-allow-blocks). The following configuration defines two dynamic groups - one called `admin` that contains all users with `"is_admin": true` in their attributes, and another called `sales` that explicitly lists the users with `"sales"` as one of the values in their `department` array.
+Dynamic groups are defined in terms of [allow blocks](https://docs.datasette.io/en/stable/authentication.html#defining-permissions-with-allow-blocks). The following configuration defines two dynamic groups - one called `admin` that contains all users with `"is_admin": true` in their attributes, and another called `sales` that explicitly includes users with `"sales"` as one of the values in their `departments` array.
 
 ```yaml
 plugins:
@@ -75,7 +75,7 @@ plugins:
       admin:
         is_admin: true
       sales:
-        department: ["sales"]
+        departments: ["sales"]
 ```
 
 Any time an actor has their permissions checked they will be dynamically added to or removed from these groups based on the current value of their actor attributes.

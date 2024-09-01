@@ -6,6 +6,7 @@ GROUPS_SQL = """
 select
     acl_groups.id,
     acl_groups.name,
+    acl_groups.deleted,
     count(acl_actor_groups.actor_id) as size,
     json_group_array(
         acl_actor_groups.actor_id
@@ -36,7 +37,9 @@ async def manage_groups(request, datasette):
     internal_db = datasette.get_internal_database()
     groups = [
         dict(r, actor_ids=json.loads(r["actor_ids"]))
-        for r in await internal_db.execute(GROUPS_SQL.format(extra_where=""))
+        for r in await internal_db.execute(
+            GROUPS_SQL.format(extra_where=" where deleted is null")
+        )
     ]
     dynamic_groups = get_dynamic_groups(datasette)
     return Response.html(
@@ -136,6 +139,7 @@ async def manage_group(request, datasette):
             {
                 "name": name,
                 "size": group["size"],
+                "is_deleted": group["deleted"],
                 "members": actor_ids,
                 "dynamic_config": dynamic_config,
                 "audit_log": [

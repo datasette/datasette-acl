@@ -41,6 +41,8 @@
 {% block content %}
 <h1>{{ name }} ({{ size }})</h1>
 
+{% if is_deleted %}<p>This group has been deleted.</p>{% endif %}
+
 {% if dynamic_config %}
 <p>This is a <em>dynamic group</em>. You cannot manually edit the users in this group.</p>
 

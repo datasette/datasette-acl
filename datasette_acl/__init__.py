@@ -25,7 +25,8 @@ create table if not exists acl_actions (
 -- new table for groups
 create table if not exists acl_groups (
     id integer primary key,
-    name text not null unique
+    name text not null unique,
+    deleted integer
 );
 
 -- new table for actor-group relationships
@@ -41,7 +42,7 @@ create table if not exists acl_groups_audit (
     id integer primary key,
     timestamp text default (datetime('now')),
     operation_by text,
-    operation text check (operation in ('added', 'removed')),
+    operation text check (operation in ('added', 'removed', 'created', 'deleted')),
     group_id integer,
     actor_id text,
     foreign key (group_id) references acl_groups(id)

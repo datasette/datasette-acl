@@ -378,7 +378,7 @@ async def test_update_dynamic_groups():
         datasette, {"is_staff": True, "id": "staff"}, skip_cache=True
     )
     assert [dict(r) for r in (await db.execute("select * from acl_groups")).rows] == [
-        {"id": 1, "name": "staff"},
+        {"id": 1, "name": "staff", "deleted": None},
     ]
     # Should record an added groups audit record
     assert (
@@ -455,8 +455,8 @@ async def test_update_dynamic_groups():
         datasette, {"is_staff": False, "id": "staff"}, skip_cache=True
     )
     assert [dict(r) for r in (await db.execute("select * from acl_groups")).rows] == [
-        {"id": 1, "name": "staff"},
-        {"id": 2, "name": "static"},
+        {"id": 1, "name": "staff", "deleted": None},
+        {"id": 2, "name": "static", "deleted": None},
     ]
 
 

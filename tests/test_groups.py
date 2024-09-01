@@ -128,3 +128,30 @@ async def get_group_members(db, group):
             )
         ).rows
     }
+
+
+@pytest.mark.asyncio
+async def test_deleted_group(ds):
+    db = ds.get_internal_database()
+    await db.execute_write(
+        "insert into acl_groups (name, deleted) values ('deleted', 1)"
+    )
+    list_response = await ds.client.get(
+        "/-/acl/groups",
+        cookies={
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
+        },
+    )
+    # Should link to staff but not to deleted
+    assert "/-/acl/groups/staff" in list_response.text
+    assert "/-/acl/groups/deleted" not in list_response.text
+
+    # deleted page should still 200 but it should say it is deleted
+    page_response = await ds.client.get(
+        "/-/acl/groups/deleted",
+        cookies={
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
+        },
+    )
+    assert page_response.status_code == 200
+    assert "has been deleted" in page_response.text

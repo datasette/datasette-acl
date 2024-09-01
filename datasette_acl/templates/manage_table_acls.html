@@ -37,7 +37,7 @@
   <tbody>
     {% for group in groups %}
       <tr>
-        <td>{{ group }} ({{ group_sizes[group] }})</td>
+        <td><a href="{{ urls.path("/-/acl/groups/" + group) }}">{{ group }}</a> ({{ group_sizes[group] }})</td>
         {% for action in actions %}
           <td><label style="display: block"><input type="checkbox" name="group_permissions_{{ group }}_{{ action }}" {% if group_permissions and group_permissions.get(group, {}).get(action) %}checked{% endif %}></label></td>
         {% endfor %}

@@ -195,6 +195,8 @@ one_second_cache = OneSecondCache()
 
 
 async def update_dynamic_groups(datasette, actor, skip_cache=False):
+    if not actor or not actor.get("id"):
+        return
     if (not skip_cache) and one_second_cache.get(actor["id"]):
         # Don't do this more than once a second per actor
         return
@@ -291,7 +293,7 @@ def permission_allowed(datasette, actor, action, resource):
         return None
 
     async def inner():
-        if not actor:
+        if not actor or not actor.get("id"):
             return None
         await update_dynamic_groups(
             datasette, actor, skip_cache=hasattr(sys, "_pytest_running")

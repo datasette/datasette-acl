@@ -99,6 +99,36 @@ plugins:
     - update-row
     - delete-row
 ```
+### Configuring autocomplete against actor IDs
+
+By default, users of this plugin can assign permissions to any actor ID by entering that ID, whether or not that ID corresponds to a user that exists elsewhere in the current Datasette configuration.
+
+If you are running this plugin in an environment with a fixed, known list of actor IDs you can implement a plugin using the `datasette_acl_actor_ids(datasette)` plugin hook which returns an iterable sequence of string actor IDs.
+
+These will then be used for both validation and autocomplete, ensuring users do not attach actor IDs that are not in that list.
+
+Example plugin implementation:
+```python
+from datasette import hookimpl
+
+@hookimpl
+def datasette_acl_actor_ids(datasette):
+    return ["paulo", "rohan", "simon"]
+```
+This function can also return an async inner function, for making async calls.
+```python
+from datasette import hookimpl
+
+@hookimpl
+def datasette_acl_actor_ids(datasette):
+    async def inner():
+        db = datasette.get_internal_database()
+        return [r[0] for r in (
+            await db.execute("select username from users")
+        ).rows]
+    return inner
+```
+
 ## Development
 
 To set up this plugin locally, first checkout the code. Then create a new virtual environment:

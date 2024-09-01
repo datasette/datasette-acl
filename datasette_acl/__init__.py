@@ -1,13 +1,16 @@
 from datasette import hookimpl, Permission
 from datasette.events import CreateTableEvent
 from datasette.utils import actor_matches_allow
+from datasette.plugins import pm
 from datasette_acl.utils import can_edit_permissions
 from datasette_acl.views.table_acls import manage_table_acls
 from datasette_acl.views.groups import manage_groups, manage_group
+from . import hookspecs
 import json
 import sys
 import time
 
+pm.add_hookspecs(hookspecs)
 
 CREATE_TABLES_SQL = """
 create table if not exists acl_resources (

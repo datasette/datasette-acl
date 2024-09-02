@@ -192,6 +192,27 @@ async def test_create_delete_group(ds, csrftoken):
         assert add_response.headers["location"] == "/-/acl/groups/sales#focus-add"
     # Check the group has those members
     assert await get_members() == {"sally", "sam", "paulo"}
+
+    # It should be shown on the table permissions page
+    table_page1 = await ds.client.get(
+        f"/db/t/-/acl",
+        cookies={
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
+            "ds_csrftoken": csrftoken,
+        },
+    )
+    assert "/groups/sales" in table_page1.text
+
+    # Add permissions for that group on that page, to test audit log later
+    await ds.client.post(
+        "/db/t/-/acl",
+        data={"group_permissions_sales_insert-row": "on", "csrftoken": csrftoken},
+        cookies={
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
+            "ds_csrftoken": csrftoken,
+        },
+    )
+
     # Deleting this group should first remove the members
     delete_group_response = await ds.client.post(
         "/-/acl/groups/sales",
@@ -210,6 +231,18 @@ async def test_create_delete_group(ds, csrftoken):
     assert (
         await internal_db.execute("select deleted from acl_groups where name = 'sales'")
     ).single_value() == 1
+
+    # Should no longer show up on table ACL page
+    table_page2 = await ds.client.get(
+        f"/db/t/-/acl",
+        cookies={
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
+            "ds_csrftoken": csrftoken,
+        },
+    )
+    assert "/groups/sales" not in table_page2.text
+    # But it should still be visible in the audit log
+    assert "<td>sales</td>" in table_page2.text
 
     # Check the audit log
     audit_rows = [

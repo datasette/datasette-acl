@@ -16,7 +16,7 @@ async def manage_table_acls(request, datasette):
     groups = [
         g["name"]
         for g in await datasette.get_internal_database().execute(
-            "select name from acl_groups"
+            "select name from acl_groups where deleted is null"
         )
     ]
 
@@ -43,7 +43,7 @@ async def manage_table_acls(request, datasette):
         from acl
         left join acl_groups on acl.group_id = acl_groups.id
         join acl_actions on acl.action_id = acl_actions.id
-        where acl.resource_id = ?
+        where acl.resource_id = ? and acl_groups.deleted is null
         """,
         [resource_id],
     )
@@ -274,6 +274,8 @@ async def manage_table_acls(request, datasette):
                 acl_groups
             left join
                 acl_actor_groups on acl_groups.id = acl_actor_groups.group_id
+            where
+                acl_groups.deleted is null
             group by
                 acl_groups.id, acl_groups.name
             """

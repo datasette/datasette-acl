@@ -55,7 +55,7 @@ async def test_datasette_acl_actor_ids_hook(ds, csrftoken, register_plugin):
             "/db/t/-/acl",
             data={
                 "new_actor_id": actor_id,
-                "new_user_insert-row": "on",
+                "new_user_actions": "insert-row",
                 "csrftoken": csrftoken,
             },
             cookies={

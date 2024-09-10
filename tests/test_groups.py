@@ -206,7 +206,7 @@ async def test_create_delete_group(ds, csrftoken):
     # Add permissions for that group on that page, to test audit log later
     await ds.client.post(
         "/db/t/-/acl",
-        data={"group_permissions_sales_insert-row": "on", "csrftoken": csrftoken},
+        data={"group_permissions_sales": "insert-row", "csrftoken": csrftoken},
         cookies={
             "ds_actor": ds.client.actor_cookie({"id": "root"}),
             "ds_csrftoken": csrftoken,

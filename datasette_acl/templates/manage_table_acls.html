@@ -17,6 +17,15 @@
 #needs-save-message.visible {
   opacity: 1;
 }
+table.audit {
+  border-collapse: collapse;
+}
+table.audit td {
+  border-top: 1px solid #aaa;
+  border-right: 1px solid #eee;
+  padding: 4px;
+  vertical-align: top;
+}
 </style>
 {% endblock %}
 
@@ -96,7 +105,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 {% if audit_log %}
 <h2>Audit history</h2>
-<table>
+<table class="audit">
   <thead>
     <tr>
       <th>Date and time</th>

@@ -25,9 +25,17 @@
   border-color: #ff3333;
   color: #ff3333;
 }
-
 .remove-button:active {
   transform: scale(0.9);
+}
+table.audit {
+  border-collapse: collapse;
+}
+table.audit td {
+  border-top: 1px solid #aaa;
+  border-right: 1px solid #eee;
+  padding: 4px;
+  vertical-align: top;
 }
 </style>
 {% endblock %}
@@ -97,7 +105,7 @@
 
 {% if audit_log %}
 <h2>Audit history</h2>
-<table>
+<table class="audit">
   <thead>
     <tr>
       <th>Date and time</th>

@@ -1,7 +1,7 @@
 from datasette import Response, Forbidden, NotFound
 from datasette_acl.utils import (
     can_edit_permissions,
-    get_acl_actor_ids,
+    get_acl_valid_actors,
     validate_actor_id,
 )
 import json
@@ -244,7 +244,7 @@ async def manage_group(request, datasette):
                         [group_id],
                     )
                 ],
-                "valid_actor_ids": await get_acl_actor_ids(datasette),
+                "valid_actors": await get_acl_valid_actors(datasette),
             },
             request=request,
         )

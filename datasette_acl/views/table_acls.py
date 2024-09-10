@@ -3,7 +3,7 @@ from datasette.utils import MultiParams
 from datasette_acl.utils import (
     can_edit_permissions,
     generate_changes_message,
-    get_acl_actor_ids,
+    get_acl_valid_actors,
     validate_actor_id,
 )
 from urllib.parse import parse_qs
@@ -308,7 +308,7 @@ async def manage_table_acls(request, datasette):
                 "group_permissions": current_group_permissions,
                 "user_permissions": current_user_permissions,
                 "audit_log": audit_log.rows,
-                "valid_actor_ids": await get_acl_actor_ids(datasette),
+                "valid_actors": await get_acl_valid_actors(datasette),
             },
             request=request,
         )

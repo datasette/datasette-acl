@@ -1,5 +1,5 @@
 from datasette import hookimpl
-from datasette_acl.utils import get_acl_actor_ids
+from datasette_acl.utils import get_acl_valid_actors
 from datasette.plugins import pm
 import pytest
 
@@ -10,12 +10,14 @@ def register_plugin():
         __name__ = "TestActorIdsPlugin"
 
         @hookimpl
-        def datasette_acl_actor_ids(self, datasette):
+        def datasette_acl_valid_actors(self, datasette):
             async def inner():
                 db = datasette.get_internal_database()
-                return [
-                    r[0] for r in (await db.execute("select username from users")).rows
-                ]
+                return (
+                    await db.execute(
+                        "select username as id, upper(username) as display from users"
+                    )
+                ).dicts()
 
             return inner
 
@@ -27,7 +29,7 @@ def register_plugin():
 
 
 @pytest.mark.asyncio
-async def test_datasette_acl_actor_ids_hook(ds, csrftoken, register_plugin):
+async def test_datasette_acl_valid_actors(ds, csrftoken, register_plugin):
     plugins_response = await ds.client.get("/-/plugins.json")
     assert any(
         plugin
@@ -41,8 +43,8 @@ async def test_datasette_acl_actor_ids_hook(ds, csrftoken, register_plugin):
         insert or ignore into users (username) values ('two');
         """
     )
-    actor_ids = await get_acl_actor_ids(ds)
-    assert actor_ids == ["one", "two"]
+    actors = await get_acl_valid_actors(ds)
+    assert actors == [("one", "ONE"), ("two", "TWO")]
 
     to_test = (
         ("one", True),

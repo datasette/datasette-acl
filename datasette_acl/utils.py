@@ -1,5 +1,6 @@
 from datasette.plugins import pm
 from datasette.utils import await_me_maybe
+from typing import List, Tuple
 
 
 async def can_edit_permissions(datasette, actor):
@@ -18,17 +19,22 @@ def generate_changes_message(changes_made, noun):
     return message[0].upper() + message[1:]
 
 
-async def get_acl_actor_ids(datasette):
-    actor_ids = []
-    for hook in pm.hook.datasette_acl_actor_ids(datasette=datasette):
-        actor_ids.extend(await await_me_maybe(hook))
-    return actor_ids
+async def get_acl_valid_actors(datasette) -> List[Tuple[str, str]]:
+    all_actors = []
+    for hook in pm.hook.datasette_acl_valid_actors(datasette=datasette):
+        actors = await await_me_maybe(hook)
+        for actor in actors:
+            if isinstance(actor, str):
+                all_actors.append((actor, actor))
+            else:
+                all_actors.append((actor["id"], actor["display"]))
+    return all_actors
 
 
 async def validate_actor_id(datasette, actor_id):
-    actor_ids = await get_acl_actor_ids(datasette)
-    if not actor_ids:
+    actors = await get_acl_valid_actors(datasette)
+    if not actors:
         # No validation has been configured
         return True
     else:
-        return actor_id in actor_ids
+        return actor_id in dict(actors)

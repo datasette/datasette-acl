@@ -63,11 +63,11 @@ table.audit td {
 
 <div style="margin-top: 2em">
   <label for="id_new_actor_id" style="display: block; font-size: 0.8em">Other user:</label>
-  {% if valid_actor_ids %}
+  {% if valid_actors %}
     <select id="id_new_actor_id" name="new_actor_id">
       <option></option>
-      {% for actor_id in valid_actor_ids %}
-        <option>{{ actor_id }}</option>
+      {% for actor in valid_actors %}
+        <option value="{{ actor[0] }}">{{ actor[1] }}</option>
       {% endfor %}
     </select>
   {% else %}

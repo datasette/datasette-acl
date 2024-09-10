@@ -38,7 +38,7 @@ ManageGroupTest = namedtuple(
         ),
     ),
 )
-async def test_manage_table_permissions(
+async def test_manage_group_membership(
     ds,
     csrftoken,
     description,

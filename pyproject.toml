@@ -1,6 +1,6 @@
 [project]
 name = "datasette-acl"
-version = "0.4a3"
+version = "0.4a4"
 description = "Advanced permission management for Datasette"
 readme = "README.md"
 authors = [{name = "Simon Willison"}]

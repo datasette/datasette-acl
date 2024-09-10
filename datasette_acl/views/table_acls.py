@@ -1,10 +1,12 @@
 from datasette import Response, Forbidden
+from datasette.utils import MultiParams
 from datasette_acl.utils import (
     can_edit_permissions,
     generate_changes_message,
     get_acl_actor_ids,
     validate_actor_id,
 )
+from urllib.parse import parse_qs
 
 
 async def manage_table_acls(request, datasette):
@@ -60,8 +62,14 @@ async def manage_table_acls(request, datasette):
 
     if request.method == "POST":
         group_changes_made = {"added": [], "removed": []}
-        post_vars = await request.post_vars()
+        body = await request.post_body()
+        post_vars = MultiParams(
+            parse_qs(qs=body.decode("utf-8"), keep_blank_values=True)
+        )
         for group_name in groups:
+            selected_group_actions = post_vars.getlist(
+                f"group_permissions_{group_name}"
+            )
             for action_name in [
                 "insert-row",
                 "delete-row",
@@ -69,9 +77,7 @@ async def manage_table_acls(request, datasette):
                 "alter-table",
                 "drop-table",
             ]:
-                new_value = bool(
-                    post_vars.get(f"group_permissions_{group_name}_{action_name}")
-                )
+                new_value = action_name in selected_group_actions
                 current_value = bool(
                     current_group_permissions.get(group_name, {}).get(action_name)
                 )
@@ -152,9 +158,11 @@ async def manage_table_acls(request, datasette):
                         request, "That user ID is not valid", datasette.ERROR
                     )
                     return Response.redirect(request.path)
-                post_key_prefix = "new_user"
+                user_actions_key = "new_user_actions"
             else:
-                post_key_prefix = f"user_permissions_{actor_id}"
+                user_actions_key = f"user_permissions_{actor_id}"
+
+            selected_user_actions = post_vars.getlist(user_actions_key)
 
             for action_name in [
                 "insert-row",
@@ -163,7 +171,7 @@ async def manage_table_acls(request, datasette):
                 "alter-table",
                 "drop-table",
             ]:
-                new_value = bool(post_vars.get(f"{post_key_prefix}_{action_name}"))
+                new_value = action_name in selected_user_actions
                 current_value = bool(
                     current_user_permissions.get(actor_id, {}).get(action_name)
                 )

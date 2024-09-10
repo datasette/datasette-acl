@@ -24,7 +24,7 @@ ManageTableTest = namedtuple(
         ManageTableTest(
             description="Group: add insert-row",
             setup_post_data={},
-            post_data={"group_permissions_staff_insert-row": "on"},
+            post_data={"group_permissions_staff": "insert-row"},
             expected_acls=[
                 {
                     "group_name": "staff",
@@ -55,10 +55,9 @@ ManageTableTest = namedtuple(
         ),
         ManageTableTest(
             description="Group: remove insert-row, add update-row and delete-row",
-            setup_post_data={"group_permissions_staff_insert-row": "on"},
+            setup_post_data={"group_permissions_staff": "insert-row"},
             post_data={
-                "group_permissions_staff_update-row": "on",
-                "group_permissions_staff_delete-row": "on",
+                "group_permissions_staff": ["update-row", "delete-row"],
             },
             expected_acls=[
                 {
@@ -132,8 +131,7 @@ ManageTableTest = namedtuple(
             setup_post_data={},
             post_data={
                 "new_actor_id": "newbie",
-                "new_user_insert-row": "on",
-                "new_user_update-row": "on",
+                "new_user_actions": ["insert-row", "update-row"],
             },
             expected_acls=[
                 {
@@ -188,10 +186,10 @@ ManageTableTest = namedtuple(
             description="Existing user: remove insert-row, add update-row",
             setup_post_data={
                 "new_actor_id": "newbie",
-                "new_user_insert-row": "on",
+                "new_user_actions": "insert-row",
             },
             post_data={
-                "user_permissions_newbie_update-row": "on",
+                "user_permissions_newbie": "update-row",
             },
             expected_acls=[
                 {

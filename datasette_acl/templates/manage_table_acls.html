@@ -3,6 +3,8 @@
 {% block title %}Permissions for {{ database_name }}/{{ table_name }}{% endblock %}
 
 {% block extra_head %}
+<script src="{{ urls.static_plugins("datasette-acl", "choices-9.0.1.min.js") }}"></script>
+<link rel="stylesheet" href="{{ urls.static_plugins("datasette-acl", "choices-9.0.1.min.css") }}">
 <style>
 #needs-save-message { 
   color: rgb(249, 114, 114);
@@ -24,67 +26,74 @@
 <p><a href=" {{ urls.table(database_name, table_name) }}">Back to table</a></p>
 
 <form action="{{ request.path }}" method="post">
-{% if valid_actor_ids %}
-  <datalist id="actor-ids">{% for actor_id in valid_actor_ids %}
-    <option value="{{ actor_id }}"></option>
+  {% if groups %}
+  <h3>Groups</h3>
+  {% for group in groups %}
+    <div style="margin-bottom: 1em">
+      <label style="display: block" for="id_group_permissions_{{ group }}"><a href="{{ urls.path("/-/acl/groups/" + group) }}">{{ group }}</a> ({{ group_sizes[group] }})</label>
+      <select multiple name="group_permissions_{{ group }}" id="id_group_permissions_{{ group }}">
+        {% for action in actions %}
+          <option value="{{ action }}" {% if group_permissions and group_permissions.get(group, {}).get(action) %}selected{% endif %}>{{ action }}</option>
+        {% endfor %}
+      </select>
+    </div>
   {% endfor %}
-  </datalist>
 {% endif %}
-{% if groups %}
-<table>
-  <thead>
-    <tr style="font-weight: bold;">
-      <th>Groups</th>
+
+<h3>Users</h3>
+{% for user in user_permissions %}
+  <div>
+    {{ user }}
+    <select multiple name="user_permissions_{{ user }}">
       {% for action in actions %}
-        <th>{{ action }}</th>
+        <option value="{{ action }}" {% if user_permissions and user_permissions.get(user, {}).get(action) %}selected{% endif %}>{{ action }}</option>
       {% endfor %}
-    </tr>
-  </thead>
-  <tbody>
-    {% for group in groups %}
-      <tr>
-        <td><a href="{{ urls.path("/-/acl/groups/" + group) }}">{{ group }}</a> ({{ group_sizes[group] }})</td>
-        {% for action in actions %}
-          <td><label style="display: block"><input type="checkbox" name="group_permissions_{{ group }}_{{ action }}" {% if group_permissions and group_permissions.get(group, {}).get(action) %}checked{% endif %}></label></td>
-        {% endfor %}
-      </tr>
+    </select>
+  </div>
+{% endfor %}
+
+<div style="margin-top: 2em">
+  <label for="id_new_actor_id" style="display: block; font-size: 0.8em">Other user:</label>
+  {% if valid_actor_ids %}
+    <select id="id_new_actor_id" name="new_actor_id">
+      <option></option>
+      {% for actor_id in valid_actor_ids %}
+        <option>{{ actor_id }}</option>
+      {% endfor %}
+    </select>
+  {% else %}
+    <input data-1p-ignore placeholder="User ID" style="width: 8em" id="id_new_actor_id" name="new_actor_id">
+  {% endif %}
+</div>
+
+<div>
+  <label for="id_new_user_actions" style="display: block; font-size: 0.8em">Permissions for the additional user:</label>
+  <select multiple name="new_user_actions" id="id_new_user_actions">
+    {% for action in actions %}
+      <option value="{{ action }}">{{ action }}</option>
     {% endfor %}
-  </tbody>
-{% else %}
-<table>
-{% endif %}
-  <thead>
-    <tr style="font-weight: bold;">
-      <th>Users</th>
-      {% for action in actions %}
-        <th>{{ action }}</th>
-      {% endfor %}
-    </tr>
-  </thead>
-  <tbody>
-    {% for user in user_permissions %}
-      <tr>
-        <td>{{ user }}</td>
-        {% for action in actions %}
-          <td><label style="display: block"><input type="checkbox" name="user_permissions_{{ user }}_{{ action }}" {% if user_permissions and user_permissions.get(user, {}).get(action) %}checked{% endif %}></label></td>
-        {% endfor %}
-      </tr>
-    {% endfor %}
-    <tr>
-      <td><label for="id_new_actor_id" style="display: block; font-size: 0.7em">Add another user:</label><input data-1p-ignore{% if valid_actor_ids %} list="actor-ids"{% endif %} style="width: 8em" id="id_new_actor_id" name="new_actor_id"></td>
-      {% for action in actions %}
-        <td><label style="padding-top: 0.9em; display: block"><input type="checkbox" name="new_user_{{ action }}"></label></td>
-      {% endfor %}
-    </tr>
-  </tbody>
-</table>
+  </select>
+</div>
 
 <p style="margin-top: 1em">
   <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
-  <input type="submit" value="Save changes">
+  <input type="submit" value="Save changes" class="core">
   <span id="needs-save-message"></span>
 </p>
 </form>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const selects = document.querySelectorAll('select');
+    selects.forEach(select => {
+        new Choices(select, {
+            removeItemButton: true,
+            containerOuter: 'choices'
+        });
+    });
+});
+</script>
+
 {% if audit_log %}
 <h2>Audit history</h2>
 <table>

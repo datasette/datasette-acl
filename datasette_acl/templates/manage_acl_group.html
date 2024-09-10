@@ -3,12 +3,15 @@
 {% block title %}{{ name }}{% endblock %}
 
 {% block extra_head %}
+<script src="{{ urls.static_plugins("datasette-acl", "choices-9.0.1.min.js") }}"></script>
+<link rel="stylesheet" href="{{ urls.static_plugins("datasette-acl", "choices-9.0.1.min.css") }}">
 <style>
 .remove-button {
   background-color: #fff;
   border: 2px solid #ff4d4d;
   color: #ff4d4d;
   padding: 3px 6px;
+  margin-bottom: 0.3em;
   font-weight: bold;
   border-radius: 5px;
   cursor: pointer;
@@ -73,14 +76,20 @@
 {% if not is_deleted %}
 <h2>Add a member</h2>
 
-<form action="{{ request.path }}" method="post">
+<form action="{{ request.path }}" method="post" class="core">
   <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
-  <p><label>User ID <input type="text" data-1p-ignore name="add"{% if valid_actor_ids %} list="actor-ids"{% endif %}></label> <input type="submit" value="Add member"></p>
+  <label for="id_add" style="flex-shrink: 0;">User ID</label>
   {% if valid_actor_ids %}
-    <datalist id="actor-ids">{% for actor_id in valid_actor_ids %}
-      <option value="{{ actor_id }}"></option>
-    {% endfor %}
-    </datalist>
+    <div class="choices" data-type="select-one" tabindex="0" style="flex-grow: 1;">
+      <select id="id_add" name="add" class="select-choice">
+        <option></option>
+        {% for actor_id in valid_actor_ids %}
+          {% if actor_id not in members %}<option>{{ actor_id }}</option>{% endif %}
+        {% endfor %}
+      </select>
+    </div>
+  {% else %}
+    <input data-1p-ignore placeholder="User ID" style="flex-grow: 1;" id="id_add" name="add">
   {% endif %}
 </form>
 {% endif %}
@@ -118,10 +127,20 @@
 {% endif %}
 
 <script>
-// Focus on add input if we just added a member
-if (window.location.hash === '#focus-add') {
-  document.querySelector('input[name="add"]').focus();
-}
+document.addEventListener('DOMContentLoaded', function() {
+  const select = document.querySelector('.select-choice');
+  if (!select) {
+    return;
+  }
+  const choices = new Choices(select);
+  select.addEventListener('addItem', (ev) => {
+    ev.target.closest('form').submit()
+  });
+  // Focus on add input if we just added a member
+  if (window.location.hash === '#focus-add') {
+    choices.showDropdown();
+  }
+});
 </script>
 
 {% endblock %}

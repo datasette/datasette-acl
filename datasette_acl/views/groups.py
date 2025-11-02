@@ -32,7 +32,7 @@ order by
 
 
 def get_dynamic_groups(datasette):
-    config = datasette.plugin_config("datasette-acl")
+    config = datasette.plugin_config("datasette-acl") or {}
     return config.get("dynamic-groups") or {}
 
 

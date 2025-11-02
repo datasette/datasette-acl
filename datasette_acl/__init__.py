@@ -1,5 +1,7 @@
-from datasette import hookimpl, Permission
+from datasette import hookimpl
 from datasette.events import CreateTableEvent
+from datasette.permissions import Action, PermissionSQL
+from datasette.resources import TableResource
 from datasette.utils import actor_matches_allow
 from datasette.plugins import pm
 from datasette_acl.utils import can_edit_permissions
@@ -80,37 +82,6 @@ create table if not exists acl_audit (
 )
 """
 
-ACL_RESOURCE_PAIR_SQL = """
-with actor_groups as (
-  select group_id
-  from acl_actor_groups
-  where actor_id = :actor_id
-),
-target_resource as (
-  select id
-  from acl_resources
-  where database = :database and resource = :resource
-),
-target_action as (
-  select id
-  from acl_actions
-  where name = :action
-),
-combined_permissions as (
-    select resource_id, action_id
-    from acl
-    where actor_id = :actor_id
-  union
-    select resource_id, action_id
-    from acl
-    where group_id in (select group_id from actor_groups)
-)
-select count(*)
-  from combined_permissions
-  where resource_id = (select id from target_resource)
-  and action_id = (select id from target_action)
-"""
-
 EXPECTED_GROUPS_SQL = """
 with expected_groups as (
   select value as group_name
@@ -156,7 +127,7 @@ def startup(datasette):
             """
             insert or ignore into acl_actions (name) values (:name)
         """,
-            [{"name": n} for n in datasette.permissions.keys()],
+            [{"name": name} for name in datasette.actions.keys()],
         )
         # And any dynamic groups
         config = datasette.plugin_config("datasette-acl") or {}
@@ -288,8 +259,12 @@ async def update_dynamic_groups(datasette, actor, skip_cache=False):
 
 
 @hookimpl
-def permission_allowed(datasette, actor, action, resource):
-    if not resource or len(resource) != 2:
+def permission_resources_sql(datasette, actor, action):
+    action_obj = datasette.actions.get(action)
+    if not action_obj:
+        return None
+    resource_class = action_obj.resource_class
+    if resource_class is None or not issubclass(resource_class, TableResource):
         return None
 
     async def inner():
@@ -298,37 +273,63 @@ def permission_allowed(datasette, actor, action, resource):
         await update_dynamic_groups(
             datasette, actor, skip_cache=hasattr(sys, "_pytest_running")
         )
-        db = datasette.get_internal_database()
-        result = await db.execute(
-            ACL_RESOURCE_PAIR_SQL,
-            {
+        return PermissionSQL(
+            sql="""
+WITH actor_groups AS (
+    SELECT ag.group_id
+    FROM acl_actor_groups ag
+    JOIN acl_groups g ON ag.group_id = g.id
+    WHERE ag.actor_id = :actor_id
+      AND g.deleted IS NULL
+),
+matching_permissions AS (
+    SELECT
+        ar.database AS parent,
+        ar.resource AS child,
+        CASE
+            WHEN a.actor_id IS NOT NULL
+                THEN 'actor:' || a.actor_id
+            ELSE 'group:' || g.name
+        END AS reason_component
+    FROM acl a
+    JOIN acl_actions aa ON a.action_id = aa.id
+    JOIN acl_resources ar ON a.resource_id = ar.id
+    LEFT JOIN acl_groups g ON a.group_id = g.id
+    WHERE aa.name = :action
+      AND (
+        a.actor_id = :actor_id
+        OR a.group_id IN (SELECT group_id FROM actor_groups)
+      )
+      AND (a.group_id IS NULL OR g.deleted IS NULL)
+)
+SELECT
+    parent,
+    child,
+    1 AS allow,
+    'datasette-acl: ' || GROUP_CONCAT(reason_component, ', ') AS reason
+FROM matching_permissions
+GROUP BY parent, child
+            """,
+            params={
                 "actor_id": actor["id"],
-                "database": resource[0],
-                "resource": resource[1],
-                "action": action,
             },
         )
-        return result.single_value() or None
 
     return inner
 
 
 @hookimpl
-def register_permissions(datasette):
+def register_actions(datasette):
     return [
-        Permission(
+        Action(
             name="datasette-acl",
-            abbr=None,
             description="Configure permissions",
-            takes_database=False,
-            takes_resource=False,
-            default=False,
         )
     ]
 
 
 @hookimpl
-def table_actions(datasette, actor, database, table):
+def table_actions(datasette, actor, database, table, request=None):
     async def inner():
         if await can_edit_permissions(datasette, actor):
             return [
@@ -389,7 +390,7 @@ def track_event(datasette, event):
 
 
 @hookimpl
-def menu_links(datasette, actor):
+def menu_links(datasette, actor, request=None):
     async def inner():
         if await can_edit_permissions(datasette, actor):
             return [

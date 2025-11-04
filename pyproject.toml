@@ -4,7 +4,7 @@ version = "0.4a5"
 description = "Advanced permission management for Datasette"
 readme = "README.md"
 authors = [{name = "Simon Willison"}]
-license = = "Apache-2.0"
+license = "Apache-2.0"
 classifiers=[
     "Framework :: Datasette",
 ]

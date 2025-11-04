@@ -1,5 +1,6 @@
 from collections import namedtuple
 from datasette.app import Datasette
+from datasette.resources import TableResource
 from datasette_acl import update_dynamic_groups
 import pytest
 
@@ -38,7 +39,7 @@ ManageTableTest = namedtuple(
                 dict(
                     actor={"id": "simon", "is_staff": True},
                     action="insert-row",
-                    resource=["db", "t"],
+                    resource=TableResource("db", "t"),
                 ),
             ],
             expected_audit_rows=[
@@ -79,12 +80,12 @@ ManageTableTest = namedtuple(
                 dict(
                     actor={"id": "simon", "is_staff": True},
                     action="delete-row",
-                    resource=["db", "t"],
+                    resource=TableResource("db", "t"),
                 ),
                 dict(
                     actor={"id": "simon", "is_staff": True},
                     action="update-row",
-                    resource=["db", "t"],
+                    resource=TableResource("db", "t"),
                 ),
             ],
             expected_audit_rows=[
@@ -153,12 +154,12 @@ ManageTableTest = namedtuple(
                 dict(
                     actor={"id": "newbie"},
                     action="insert-row",
-                    resource=["db", "t"],
+                    resource=TableResource("db", "t"),
                 ),
                 dict(
                     actor={"id": "newbie"},
                     action="update-row",
-                    resource=["db", "t"],
+                    resource=TableResource("db", "t"),
                 ),
             ],
             expected_audit_rows=[
@@ -204,7 +205,7 @@ ManageTableTest = namedtuple(
                 dict(
                     actor={"id": "newbie"},
                     action="update-row",
-                    resource=["db", "t"],
+                    resource=TableResource("db", "t"),
                 ),
             ],
             expected_audit_rows=[
@@ -270,8 +271,12 @@ async def test_manage_table_permissions(
         assert setup_response.status_code == 302
 
     # Permission checks should fail
-    for kwargs in should_fail_then_succeed:
-        assert not await ds.permission_allowed(**kwargs), f"Should have failed: {repr}"
+    for item in should_fail_then_succeed:
+        assert not await ds.allowed(
+            action=item["action"],
+            actor=item.get("actor"),
+            resource=item.get("resource"),
+        ), f"Should have failed: {repr(item)}"
 
     # Use the /db/table/-/acl page to update permissions
     response = await ds.client.post(
@@ -307,10 +312,12 @@ async def test_manage_table_permissions(
     assert acls == expected_acls
 
     # Permission checks should pass now
-    for kwargs in should_fail_then_succeed:
-        assert await ds.permission_allowed(
-            **kwargs
-        ), f"Should have passed: {repr(kwargs)}"
+    for item in should_fail_then_succeed:
+        assert await ds.allowed(
+            action=item["action"],
+            actor=item.get("actor"),
+            resource=item.get("resource"),
+        ), f"Should have passed: {repr(item)}"
 
     # Check audit logs
     AUDIT_SQL = """
@@ -518,14 +525,20 @@ async def test_table_creator_permissions():
         },
     ]
     # Permission checks too
-    assert await datasette.permission_allowed(
-        actor={"id": "simon"}, action="insert-row", resource=["db", "new_table"]
+    assert await datasette.allowed(
+        actor={"id": "simon"},
+        action="insert-row",
+        resource=TableResource("db", "new_table"),
     )
-    assert await datasette.permission_allowed(
-        actor={"id": "simon"}, action="delete-row", resource=["db", "new_table"]
+    assert await datasette.allowed(
+        actor={"id": "simon"},
+        action="delete-row",
+        resource=TableResource("db", "new_table"),
     )
-    assert not await datasette.permission_allowed(
-        actor={"id": "simon"}, action="update-row", resource=["db", "new_table"]
+    assert not await datasette.allowed(
+        actor={"id": "simon"},
+        action="update-row",
+        resource=TableResource("db", "new_table"),
     )
 
 

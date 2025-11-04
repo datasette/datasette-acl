@@ -4,7 +4,7 @@ from typing import List, Tuple
 
 
 async def can_edit_permissions(datasette, actor):
-    return await datasette.permission_allowed(actor, "datasette-acl")
+    return await datasette.allowed(actor=actor, action="datasette-acl")
 
 
 def generate_changes_message(changes_made, noun):

@@ -543,6 +543,87 @@ async def test_table_creator_permissions():
 
 
 @pytest.mark.asyncio
+async def test_nonexistent_table_returns_404(ds, csrftoken):
+    """GET and POST to ACL page for a table that doesn't exist should 404."""
+    for method in ("get", "post"):
+        kwargs = {
+            "cookies": {
+                "ds_actor": ds.client.actor_cookie({"id": "root"}),
+                "ds_csrftoken": csrftoken,
+            },
+        }
+        if method == "post":
+            kwargs["data"] = {
+                "group_permissions_staff": "insert-row",
+                "csrftoken": csrftoken,
+            }
+        response = await getattr(ds.client, method)("/db/nonexistent/-/acl", **kwargs)
+        assert response.status_code == 404, (
+            f"{method.upper()} to nonexistent table should return 404"
+        )
+    # Should NOT have created a phantom acl_resources entry
+    internal_db = ds.get_internal_database()
+    phantom = (
+        await internal_db.execute(
+            "select count(*) from acl_resources where database = 'db' and resource = 'nonexistent'"
+        )
+    ).single_value()
+    assert phantom == 0, "Should not create acl_resources for nonexistent table"
+
+
+@pytest.mark.asyncio
+async def test_nonexistent_database_returns_404(ds, csrftoken):
+    """ACL page for a database that doesn't exist should 404."""
+    response = await ds.client.get(
+        "/fake_db/fake_table/-/acl",
+        cookies={
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
+        },
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_new_actor_id_too_long_rejected(ds, csrftoken):
+    """Submitting a very long actor_id should be rejected with an error."""
+    long_id = "a" * 1001
+    response = await ds.client.post(
+        "/db/t/-/acl",
+        data={
+            "new_actor_id": long_id,
+            "new_user_actions": "insert-row",
+            "csrftoken": csrftoken,
+        },
+        cookies={
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
+            "ds_csrftoken": csrftoken,
+        },
+    )
+    assert response.status_code == 302
+    # Follow redirect, carrying over the ds_messages cookie set by the redirect
+    cookies = {
+        "ds_actor": ds.client.actor_cookie({"id": "root"}),
+        "ds_csrftoken": csrftoken,
+    }
+    if "ds_messages" in response.cookies:
+        cookies["ds_messages"] = response.cookies["ds_messages"]
+    follow = await ds.client.get(
+        response.headers["location"],
+        cookies=cookies,
+    )
+    assert "Actor ID must be" in follow.text
+    # Should NOT have created an ACL entry for the long id
+    internal_db = ds.get_internal_database()
+    count = (
+        await internal_db.execute(
+            "select count(*) from acl where actor_id = :actor_id",
+            {"actor_id": long_id},
+        )
+    ).single_value()
+    assert count == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("should_work", (True, False))
 async def test_table_actions(ds, should_work):
     response = await ds.client.get(

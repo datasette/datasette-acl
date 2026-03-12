@@ -1,4 +1,4 @@
-from datasette import Response, Forbidden
+from datasette import Response, Forbidden, NotFound
 from datasette.utils import MultiParams
 from datasette_acl.utils import (
     can_edit_permissions,
@@ -8,12 +8,32 @@ from datasette_acl.utils import (
 )
 from urllib.parse import parse_qs
 
+VALID_ACTIONS = [
+    "insert-row",
+    "delete-row",
+    "update-row",
+    "alter-table",
+    "drop-table",
+]
+
+MAX_ACTOR_ID_LENGTH = 256
+
 
 async def manage_table_acls(request, datasette):
     if not await can_edit_permissions(datasette, request.actor):
         raise Forbidden("You do not have permission to edit permissions")
     table = request.url_vars["table"]
     database = request.url_vars["database"]
+
+    # Validate the database and table exist
+    try:
+        db = datasette.get_database(database)
+    except KeyError:
+        raise NotFound(f"Database '{database}' not found")
+    table_names = await db.table_names()
+    if table not in table_names:
+        raise NotFound(f"Table '{table}' not found in database '{database}'")
+
     internal_db = datasette.get_internal_database()
     groups = [
         g["name"]
@@ -70,13 +90,7 @@ async def manage_table_acls(request, datasette):
             selected_group_actions = post_vars.getlist(
                 f"group_permissions_{group_name}"
             )
-            for action_name in [
-                "insert-row",
-                "delete-row",
-                "update-row",
-                "alter-table",
-                "drop-table",
-            ]:
+            for action_name in VALID_ACTIONS:
                 new_value = action_name in selected_group_actions
                 current_value = bool(
                     current_group_permissions.get(group_name, {}).get(action_name)
@@ -153,6 +167,13 @@ async def manage_table_acls(request, datasette):
                 actor_id = (post_vars.get("new_actor_id") or "").strip()
                 if not actor_id:
                     continue
+                if len(actor_id) > MAX_ACTOR_ID_LENGTH:
+                    datasette.add_message(
+                        request,
+                        f"Actor ID must be {MAX_ACTOR_ID_LENGTH} characters or less",
+                        datasette.ERROR,
+                    )
+                    return Response.redirect(request.path)
                 if not await validate_actor_id(datasette, actor_id):
                     datasette.add_message(
                         request, "That user ID is not valid", datasette.ERROR
@@ -164,13 +185,7 @@ async def manage_table_acls(request, datasette):
 
             selected_user_actions = post_vars.getlist(user_actions_key)
 
-            for action_name in [
-                "insert-row",
-                "delete-row",
-                "update-row",
-                "alter-table",
-                "drop-table",
-            ]:
+            for action_name in VALID_ACTIONS:
                 new_value = action_name in selected_user_actions
                 current_value = bool(
                     current_user_permissions.get(actor_id, {}).get(action_name)
@@ -296,13 +311,7 @@ async def manage_table_acls(request, datasette):
             {
                 "database_name": request.url_vars["database"],
                 "table_name": request.url_vars["table"],
-                "actions": [
-                    "insert-row",
-                    "delete-row",
-                    "update-row",
-                    "alter-table",
-                    "drop-table",
-                ],
+                "actions": VALID_ACTIONS,
                 "groups": groups,
                 "group_sizes": group_sizes,
                 "group_permissions": current_group_permissions,

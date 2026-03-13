@@ -4,7 +4,6 @@ from datasette.resources import TableResource
 from datasette_acl import update_dynamic_groups
 import pytest
 
-
 ManageTableTest = namedtuple(
     "ManageTableTest",
     (
@@ -290,11 +289,7 @@ async def test_manage_table_permissions(
     assert response.status_code == 302
 
     # Check ACLs
-    acls = [
-        dict(r)
-        for r in (
-            await internal_db.execute(
-                """
+    acls = [dict(r) for r in (await internal_db.execute("""
         select
           acl_groups.name as group_name,
           acl.actor_id,
@@ -305,10 +300,7 @@ async def test_manage_table_permissions(
         left join acl_groups on acl.group_id = acl_groups.id
         join acl_actions on acl.action_id = acl_actions.id
         join acl_resources on acl.resource_id = acl_resources.id
-    """
-            )
-        )
-    ]
+    """))]
     assert acls == expected_acls
 
     # Permission checks should pass now
@@ -380,17 +372,10 @@ async def test_update_dynamic_groups():
     ]
     # Should record an added groups audit record
     assert (
-        [
-            dict(r)
-            for r in (
-                await db.execute(
-                    """
+        [dict(r) for r in (await db.execute("""
             select operation, operation_by, group_id, actor_id
             from acl_groups_audit
-        """
-                )
-            ).rows
-        ]
+        """)).rows]
         == [
             {
                 "operation": "added",
@@ -424,17 +409,10 @@ async def test_update_dynamic_groups():
     ] == []
     # Should record a removed groups audit record
     assert (
-        [
-            dict(r)
-            for r in (
-                await db.execute(
-                    """
+        [dict(r) for r in (await db.execute("""
             select operation, operation_by, group_id, actor_id
             from acl_groups_audit order by id desc limit 1
-        """
-                )
-            ).rows
-        ]
+        """)).rows]
         == [
             {
                 "operation": "removed",
@@ -491,11 +469,7 @@ async def test_table_creator_permissions():
     )
     assert create_response.status_code == 201
     # That table should have insert-row and delete-row ACLs
-    acls = [
-        dict(r)
-        for r in (
-            await datasette.get_internal_database().execute(
-                """
+    acls = [dict(r) for r in (await datasette.get_internal_database().execute("""
         select
           acl.actor_id,
           acl_actions.name as action_name,
@@ -506,10 +480,7 @@ async def test_table_creator_permissions():
         join acl_resources on acl.resource_id = acl_resources.id
         where acl_resources.database = 'db'
         and acl_resources.resource = 'new_table'
-    """
-            )
-        )
-    ]
+    """))]
     assert acls == [
         {
             "actor_id": "simon",
@@ -540,6 +511,73 @@ async def test_table_creator_permissions():
         action="update-row",
         resource=TableResource("db", "new_table"),
     )
+
+
+@pytest.mark.asyncio
+async def test_table_acl_writes_implicit_resource_group(ds, csrftoken):
+    response = await ds.client.post(
+        "/db/t/-/acl",
+        data={
+            "group_permissions_staff": "insert-row",
+            "new_actor_id": "newbie",
+            "new_user_actions": "update-row",
+            "csrftoken": csrftoken,
+        },
+        cookies={
+            "ds_actor": ds.client.actor_cookie({"id": "root"}),
+            "ds_csrftoken": csrftoken,
+        },
+    )
+    assert response.status_code == 302
+
+    internal_db = ds.get_internal_database()
+    resource_group = (await internal_db.execute("""
+            select slug, name, description
+            from acl_resource_groups
+            where slug = 'table:db/t'
+            """)).first()
+    assert dict(resource_group) == {
+        "slug": "table:db/t",
+        "name": "Table db/t",
+        "description": "Compatibility resource group for table db/t",
+    }
+
+    items = [dict(row) for row in (await internal_db.execute("""
+                select resource_type, resource_key
+                from acl_resource_group_items
+                where resource_group_id = (
+                    select id from acl_resource_groups where slug = 'table:db/t'
+                )
+                order by id
+                """)).rows]
+    assert items == [{"resource_type": "table", "resource_key": "db/t"}]
+
+    grants = [dict(row) for row in (await internal_db.execute("""
+                select
+                    actor_id,
+                    actor_group_id,
+                    role_name,
+                    action_name
+                from acl_resource_group_grants
+                where resource_group_id = (
+                    select id from acl_resource_groups where slug = 'table:db/t'
+                )
+                order by actor_id, actor_group_id, role_name, action_name
+                """)).rows]
+    assert grants == [
+        {
+            "actor_id": None,
+            "actor_group_id": 1,
+            "role_name": None,
+            "action_name": "insert-row",
+        },
+        {
+            "actor_id": "newbie",
+            "actor_group_id": None,
+            "role_name": None,
+            "action_name": "update-row",
+        },
+    ]
 
 
 @pytest.mark.asyncio

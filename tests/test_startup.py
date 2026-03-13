@@ -26,11 +26,7 @@ async def test_startup_creates_resource_group_tables_and_default_role_bundles():
     ):
         assert table_name in await internal_db.table_names()
 
-    role_rows = [
-        dict(row)
-        for row in (
-            await internal_db.execute(
-                """
+    role_rows = [dict(row) for row in (await internal_db.execute("""
                 select
                     acl_role_bundles.name,
                     group_concat(acl_role_bundle_actions.action_name, ',') as actions
@@ -39,10 +35,7 @@ async def test_startup_creates_resource_group_tables_and_default_role_bundles():
                   on acl_role_bundle_actions.role_bundle_id = acl_role_bundles.id
                 group by acl_role_bundles.id
                 order by acl_role_bundles.name
-                """
-            )
-        )
-    ]
+                """))]
     assert role_rows == [
         {
             "name": "admin",

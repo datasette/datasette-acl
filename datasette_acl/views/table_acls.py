@@ -1,5 +1,6 @@
 from datasette import Response, Forbidden
 from datasette.utils import MultiParams
+from datasette_acl.resource_groups import sync_table_resource_group_grant
 from datasette_acl.utils import (
     can_edit_permissions,
     generate_changes_message,
@@ -102,6 +103,15 @@ async def manage_table_acls(request, datasette):
                         )
                         operation = "added"
                         group_changes_made["added"].append((group_name, action_name))
+                        await sync_table_resource_group_grant(
+                            datasette,
+                            database,
+                            table,
+                            action_name,
+                            granted_by=request.actor["id"],
+                            group_name=group_name,
+                            enabled=True,
+                        )
                     else:
                         # They removed it
                         await internal_db.execute_write(
@@ -120,6 +130,15 @@ async def manage_table_acls(request, datasette):
                         )
                         operation = "removed"
                         group_changes_made["removed"].append((group_name, action_name))
+                        await sync_table_resource_group_grant(
+                            datasette,
+                            database,
+                            table,
+                            action_name,
+                            granted_by=request.actor["id"],
+                            group_name=group_name,
+                            enabled=False,
+                        )
                     await internal_db.execute_write(
                         """
                         insert into acl_audit (
@@ -196,6 +215,15 @@ async def manage_table_acls(request, datasette):
                         )
                         operation = "added"
                         user_changes_made["added"].append((actor_id, action_name))
+                        await sync_table_resource_group_grant(
+                            datasette,
+                            database,
+                            table,
+                            action_name,
+                            granted_by=request.actor["id"],
+                            actor_id=actor_id,
+                            enabled=True,
+                        )
                     else:
                         # They removed the permission
                         await internal_db.execute_write(
@@ -214,6 +242,15 @@ async def manage_table_acls(request, datasette):
                         )
                         operation = "removed"
                         user_changes_made["removed"].append((actor_id, action_name))
+                        await sync_table_resource_group_grant(
+                            datasette,
+                            database,
+                            table,
+                            action_name,
+                            granted_by=request.actor["id"],
+                            actor_id=actor_id,
+                            enabled=False,
+                        )
                     await internal_db.execute_write(
                         """
                         insert into acl_audit (
@@ -271,10 +308,7 @@ async def manage_table_acls(request, datasette):
     )
 
     # group_sizes dictionary for displaying their sizes
-    group_sizes = {
-        row["name"]: row["size"]
-        for row in await internal_db.execute(
-            """
+    group_sizes = {row["name"]: row["size"] for row in await internal_db.execute("""
             select
                 acl_groups.name as name,
                 count(acl_actor_groups.actor_id) as size
@@ -286,9 +320,7 @@ async def manage_table_acls(request, datasette):
                 acl_groups.deleted is null
             group by
                 acl_groups.id, acl_groups.name
-            """
-        )
-    }
+            """)}
 
     return Response.html(
         await datasette.render_template(

@@ -27,6 +27,40 @@ Permissions are saved in the internal database. This means you should run Datase
 
 The internal database now also stores resource-group tables and built-in role bundles (`viewer`, `editor`, `admin`) that are used by the newer generalized authorization features.
 
+## Resource groups
+
+`datasette-acl` now includes a generalized resource-group authorization layer alongside the original table ACL UI.
+
+A resource group is a named collection of Datasette resources such as:
+
+- tables: `db/t`
+- databases: `db`
+- queries: `db/recent`
+
+Grants can be attached to either individual actors or actor groups, using either a direct action or a named role bundle.
+
+Built-in role bundles are:
+
+- `viewer`
+- `editor`
+- `admin`
+
+### JSON API
+
+The first resource-group management interface is available as JSON endpoints:
+
+- `GET /-/acl/resource-groups.json`
+- `POST /-/acl/resource-groups.json`
+- `GET /-/acl/resource-groups/{slug}.json`
+- `POST /-/acl/resource-groups/{slug}/resources.json`
+- `POST /-/acl/resource-groups/{slug}/grants.json`
+
+These endpoints currently support built-in `table`, `database`, and `query` resource types.
+
+### Table ACL compatibility
+
+The existing table ACL management page at `/database/table/-/acl` still works. Changes made there are now also mirrored into an implicit resource group with a slug in the form `table:database/table`, so the old and new permission systems share the same underlying authorization model.
+
 ### Managing permissions for a table
 
 The interface for configuring table permissions lives at `/database-name/table-name/-/acl`. It can be accessed from the table actions menu on the table page.

@@ -1,13 +1,22 @@
 from datasette import hookimpl
 from datasette.events import CreateTableEvent
 from datasette.permissions import Action, PermissionSQL
-from datasette.resources import TableResource
+from datasette.resources import DatabaseResource, QueryResource, TableResource
 from datasette.utils import actor_matches_allow
 from datasette.plugins import pm
-from datasette_acl.resource_groups import ensure_role_bundles
+from datasette_acl.resource_groups import (
+    ensure_role_bundles,
+    sync_table_resource_group_grant,
+)
 from datasette_acl.utils import can_edit_permissions
 from datasette_acl.views.table_acls import manage_table_acls
 from datasette_acl.views.groups import manage_groups, manage_group
+from datasette_acl.views.resource_groups import (
+    resource_group_grants_json,
+    resource_group_json,
+    resource_group_resources_json,
+    resource_groups_json,
+)
 from . import hookspecs
 import json
 import sys
@@ -341,7 +350,16 @@ def permission_resources_sql(datasette, actor, action):
     if not action_obj:
         return None
     resource_class = action_obj.resource_class
-    if resource_class is None or not issubclass(resource_class, TableResource):
+    resource_type = None
+    if resource_class is None:
+        return None
+    if issubclass(resource_class, TableResource):
+        resource_type = "table"
+    elif issubclass(resource_class, QueryResource):
+        resource_type = "query"
+    elif issubclass(resource_class, DatabaseResource):
+        resource_type = "database"
+    else:
         return None
 
     async def inner():
@@ -350,8 +368,7 @@ def permission_resources_sql(datasette, actor, action):
         await update_dynamic_groups(
             datasette, actor, skip_cache=hasattr(sys, "_pytest_running")
         )
-        return PermissionSQL(
-            sql="""
+        resource_group_sql = """
 WITH actor_groups AS (
     SELECT ag.group_id
     FROM acl_actor_groups ag
@@ -359,7 +376,60 @@ WITH actor_groups AS (
     WHERE ag.actor_id = :actor_id
       AND g.deleted IS NULL
 ),
-matching_permissions AS (
+matching_grants AS (
+    select
+        rgi.resource_type,
+        rgi.resource_key,
+        CASE
+            when rgg.actor_id is not null
+                then 'actor:' || rgg.actor_id
+            ELSE 'group:' || g.name
+        END AS reason_component
+    from acl_resource_group_grants rgg
+    join acl_resource_group_items rgi on rgi.resource_group_id = rgg.resource_group_id
+    left join acl_groups g on g.id = rgg.actor_group_id
+    left join acl_role_bundles arb on arb.name = rgg.role_name
+    left join acl_role_bundle_actions arba on arba.role_bundle_id = arb.id
+    where coalesce(rgg.action_name, arba.action_name) = :action
+      and rgi.resource_type = :resource_type
+      and (rgg.expires_at is null or rgg.expires_at > datetime('now'))
+      AND (
+        rgg.actor_id = :actor_id
+        OR rgg.actor_group_id IN (SELECT group_id FROM actor_groups)
+      )
+      AND (rgg.actor_group_id IS NULL OR g.deleted IS NULL)
+),
+resource_group_permissions AS (
+    SELECT
+        case
+            when resource_type = 'database' then resource_key
+            else substr(resource_key, 1, instr(resource_key, '/') - 1)
+        end as parent,
+        case
+            when resource_type = 'database' then null
+            else substr(resource_key, instr(resource_key, '/') + 1)
+        end as child,
+        reason_component
+    from matching_grants
+)
+SELECT
+    parent,
+    child,
+    1 AS allow,
+    'datasette-acl: ' || GROUP_CONCAT(reason_component, ', ') AS reason
+FROM resource_group_permissions
+GROUP BY parent, child
+        """
+        if resource_type == "table":
+            resource_group_sql = """
+WITH actor_groups AS (
+    SELECT ag.group_id
+    FROM acl_actor_groups ag
+    JOIN acl_groups g ON ag.group_id = g.id
+    WHERE ag.actor_id = :actor_id
+      AND g.deleted IS NULL
+),
+legacy_permissions AS (
     SELECT
         ar.database AS parent,
         ar.resource AS child,
@@ -378,6 +448,40 @@ matching_permissions AS (
         OR a.group_id IN (SELECT group_id FROM actor_groups)
       )
       AND (a.group_id IS NULL OR g.deleted IS NULL)
+),
+matching_grants AS (
+    select
+        rgi.resource_key,
+        CASE
+            when rgg.actor_id is not null
+                then 'actor:' || rgg.actor_id
+            ELSE 'group:' || g.name
+        END AS reason_component
+    from acl_resource_group_grants rgg
+    join acl_resource_group_items rgi on rgi.resource_group_id = rgg.resource_group_id
+    left join acl_groups g on g.id = rgg.actor_group_id
+    left join acl_role_bundles arb on arb.name = rgg.role_name
+    left join acl_role_bundle_actions arba on arba.role_bundle_id = arb.id
+    where coalesce(rgg.action_name, arba.action_name) = :action
+      and rgi.resource_type = 'table'
+      and (rgg.expires_at is null or rgg.expires_at > datetime('now'))
+      and (
+        rgg.actor_id = :actor_id
+        or rgg.actor_group_id in (select group_id from actor_groups)
+      )
+      and (rgg.actor_group_id is null or g.deleted is null)
+),
+resource_group_permissions AS (
+    SELECT
+        substr(resource_key, 1, instr(resource_key, '/') - 1) as parent,
+        substr(resource_key, instr(resource_key, '/') + 1) as child,
+        reason_component
+    from matching_grants
+),
+matching_permissions AS (
+    select * from legacy_permissions
+    union all
+    select * from resource_group_permissions
 )
 SELECT
     parent,
@@ -386,9 +490,13 @@ SELECT
     'datasette-acl: ' || GROUP_CONCAT(reason_component, ', ') AS reason
 FROM matching_permissions
 GROUP BY parent, child
-            """,
+            """
+        return PermissionSQL(
+            sql=resource_group_sql,
             params={
                 "actor_id": actor["id"],
+                "action": action,
+                "resource_type": resource_type,
             },
         )
 
@@ -462,6 +570,16 @@ def track_event(datasette, event):
                 for action_name in config["table-creator-permissions"]
             ],
         )
+        for action_name in config["table-creator-permissions"]:
+            await sync_table_resource_group_grant(
+                datasette,
+                event.database,
+                event.table,
+                action_name,
+                granted_by=event.actor["id"],
+                actor_id=event.actor["id"],
+                enabled=True,
+            )
 
     return inner
 
@@ -486,4 +604,14 @@ def register_routes():
         ("^/(?P<database>[^/]+)/(?P<table>[^/]+)/-/acl$", manage_table_acls),
         ("^/-/acl/groups$", manage_groups),
         ("^/-/acl/groups/(?P<name>[^/]+)$", manage_group),
+        ("^/-/acl/resource-groups\\.json$", resource_groups_json),
+        ("^/-/acl/resource-groups/(?P<slug>[^/]+)\\.json$", resource_group_json),
+        (
+            "^/-/acl/resource-groups/(?P<slug>[^/]+)/resources\\.json$",
+            resource_group_resources_json,
+        ),
+        (
+            "^/-/acl/resource-groups/(?P<slug>[^/]+)/grants\\.json$",
+            resource_group_grants_json,
+        ),
     ]

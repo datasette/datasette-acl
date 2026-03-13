@@ -13,6 +13,9 @@ dependencies = [
     "datasette>=1.0a20"
 ]
 
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio"]
+
 [project.urls]
 Homepage = "https://github.com/datasette/datasette-acl"
 Changelog = "https://github.com/datasette/datasette-acl/releases"
@@ -22,8 +25,9 @@ CI = "https://github.com/datasette/datasette-acl/actions"
 [project.entry-points.datasette]
 acl = "datasette_acl"
 
-[project.optional-dependencies]
-test = ["pytest", "pytest-asyncio"]
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"

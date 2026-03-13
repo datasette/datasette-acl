@@ -4,6 +4,7 @@ from datasette.permissions import Action, PermissionSQL
 from datasette.resources import TableResource
 from datasette.utils import actor_matches_allow
 from datasette.plugins import pm
+from datasette_acl.resource_groups import ensure_role_bundles
 from datasette_acl.utils import can_edit_permissions
 from datasette_acl.views.table_acls import manage_table_acls
 from datasette_acl.views.groups import manage_groups, manage_group
@@ -79,6 +80,81 @@ create table if not exists acl_audit (
     foreign key (group_id) references acl_groups(id),
     foreign key (resource_id) references acl_resources(id),
     foreign key (action_id) references acl_actions(id)
+);
+
+create table if not exists acl_resource_groups (
+    id integer primary key,
+    slug text unique not null,
+    name text not null,
+    description text,
+    created_by text,
+    created_at text default (datetime('now')),
+    updated_at text default (datetime('now')),
+    deleted integer default 0
+);
+
+create table if not exists acl_resource_group_items (
+    id integer primary key,
+    resource_group_id integer not null references acl_resource_groups(id),
+    resource_type text not null,
+    resource_key text not null,
+    note text,
+    added_by text,
+    added_at text default (datetime('now')),
+    unique(resource_group_id, resource_type, resource_key)
+);
+
+create table if not exists acl_resource_groups_audit (
+    id integer primary key,
+    timestamp text default (datetime('now')),
+    operation_by text,
+    operation text,
+    resource_group_id integer references acl_resource_groups(id),
+    resource_type text,
+    resource_key text,
+    metadata text
+);
+
+create table if not exists acl_resource_group_grants (
+    id integer primary key,
+    resource_group_id integer not null references acl_resource_groups(id),
+    actor_id text,
+    actor_group_id integer references acl_groups(id),
+    role_name text,
+    action_name text,
+    granted_by text,
+    created_at text default (datetime('now')),
+    expires_at text,
+    check ((actor_id is null) != (actor_group_id is null)),
+    check ((role_name is null) != (action_name is null)),
+    unique(resource_group_id, actor_id, actor_group_id, role_name, action_name)
+);
+
+create table if not exists acl_resource_group_grants_audit (
+    id integer primary key,
+    timestamp text default (datetime('now')),
+    operation_by text,
+    operation text,
+    resource_group_id integer references acl_resource_groups(id),
+    actor_id text,
+    actor_group_id integer references acl_groups(id),
+    role_name text,
+    action_name text,
+    metadata text
+);
+
+create table if not exists acl_role_bundles (
+    id integer primary key,
+    name text unique not null,
+    description text,
+    source_plugin text,
+    is_system integer default 0
+);
+
+create table if not exists acl_role_bundle_actions (
+    role_bundle_id integer not null references acl_role_bundles(id),
+    action_name text not null,
+    primary key (role_bundle_id, action_name)
 )
 """
 
@@ -129,6 +205,7 @@ def startup(datasette):
         """,
             [{"name": name} for name in datasette.actions.keys()],
         )
+        await ensure_role_bundles(datasette)
         # And any dynamic groups
         config = datasette.plugin_config("datasette-acl") or {}
         groups = config.get("dynamic-groups")

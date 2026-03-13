@@ -9,7 +9,7 @@ Advanced permission management for Datasette. **Highly experimental**.
 
 ## Installation
 
-Install this plugin in the same environment as Datasette. This plugin requires Datasette 1.0a15 or higher.
+Install this plugin in the same environment as Datasette. This plugin requires Datasette 1.0a25 or higher.
 ```bash
 datasette install datasette-acl
 ```
@@ -24,6 +24,8 @@ This plugin is under active development. It currently only supports configuring 
 - `drop-table`
 
 Permissions are saved in the internal database. This means you should run Datasette with the `--internal path/to/internal.db` option, otherwise your permissions will be reset every time you restart Datasette.
+
+The internal database now also stores resource-group tables and built-in role bundles (`viewer`, `editor`, `admin`) that are used by the newer generalized authorization features.
 
 ### Managing permissions for a table
 

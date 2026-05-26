@@ -14,16 +14,37 @@ to a name + member count from ``acl_groups`` / ``acl_actor_groups``. Wildcard
 principals (``*`` / ``_signed_in`` / ``_anonymous``) are flagged ``kind:"public"``
 and surface in the dialog's "General access" section.
 
-Per-resource authorization (the manage check) is formalized in task 04. Until
-then ``can_manage`` is computed here from either the global ``datasette-acl``
-permission OR the per-resource manage action (via the roles registry); the read
-endpoint is gated on ``can_manage``.
+Task 04 adds the *write* side — three JSON POST endpoints, each authorized by a
+**per-resource** manage check rather than a global flag:
+
+    POST /-/acl/api/resource/{resource_type}/{parent}/{child}/grant
+    POST .../revoke
+    POST .../update
+
+``can_manage`` (and its raising sibling ``_ensure_can_manage``) is the
+authoritative authz gate: an actor may manage sharing if EITHER they hold the
+global ``datasette-acl`` permission (admin) OR they are ``datasette.allowed`` a
+``manage=True`` role's action on *this specific resource* (i.e. they hold a
+Manager/Owner grant — which itself flows through the same acl machinery, so it
+composes with groups). A resource type that registers no ``manage`` role falls
+back to the global ``datasette-acl`` permission, so table-style resources still
+work.
+
+CSRF: datasette 1.0a30 replaced token-based asgi-csrf with the header-based
+``CrossOriginProtectionMiddleware`` (Sec-Fetch-Site + Origin). That core
+middleware rejects cross-origin browser writes before they reach these
+handlers, so the endpoints carry no server-side CSRF token logic of their own;
+the share component sends same-origin requests (and may set ``x-csrftoken`` for
+forward compat, which core ignores). Non-browser clients (the test client,
+curl) send neither header and pass through.
 """
+
+import json
 
 from datasette import Response, Forbidden
 
-from datasette_acl.grants import list_grants
-from datasette_acl.roles import role_for_actions, manage_actions
+from datasette_acl.grants import grant, revoke, update_role, list_grants
+from datasette_acl.roles import role_for_actions, manage_only_actions
 from datasette_acl.utils import build_resource, resource_class_for, can_edit_permissions
 
 # Wildcard / "general access" principals. These are stored as actor_id values in
@@ -57,19 +78,30 @@ def _roles_payload(roles):
 async def can_manage(datasette, actor, resource_type, parent, child=None):
     """Whether ``actor`` may manage sharing for this resource.
 
-    Task 04 will own the authoritative per-resource manage check; this is the
-    forward-compatible version it will build on. An actor can manage if EITHER:
+    The authoritative per-resource manage check (task 04). An actor can manage
+    if EITHER:
 
-      * they hold the global ``datasette-acl`` permission (admin), OR
-      * they are allowed the resource type's "manage" action on this specific
-        resource (i.e. they hold a ``manage=True`` role grant).
+      * they are ``datasette.allowed`` one of the resource type's *manage-only*
+        actions on this specific resource — i.e. they hold a ``manage=True``
+        role grant (Manager/Owner), which flows through the same acl machinery
+        and so composes with groups; OR
+      * the resource type registers no ``manage`` role, in which case we fall
+        back to the global ``datasette-acl`` permission so table-style resources
+        (which only have raw actions, no roles) still work.
+
+    The manage check authorizes against :func:`manage_only_actions` (the action
+    exclusive to manage roles, e.g. ``paper-manage``) rather than the full
+    Manager action bundle — otherwise any Viewer/Editor, who also holds
+    ``*-view``, would pass. The global ``datasette-acl`` admin always wins.
 
     Returns False (rather than raising) for unknown resource types.
     """
     if await can_edit_permissions(datasette, actor):
         return True
-    manage = manage_actions(_roles_for(datasette, resource_type))
+    manage = manage_only_actions(_roles_for(datasette, resource_type))
     if not manage:
+        # No manage role for this type: fall back to global admin (already
+        # checked above and was False), so non-admins cannot manage.
         return False
     try:
         resource = build_resource(datasette, resource_type, parent, child)
@@ -79,6 +111,18 @@ async def can_manage(datasette, actor, resource_type, parent, child=None):
         if await datasette.allowed(action=action, resource=resource, actor=actor):
             return True
     return False
+
+
+async def _ensure_can_manage(datasette, request, resource_type, parent, child=None):
+    """Raise ``Forbidden`` unless ``request.actor`` may manage this resource.
+
+    The authoritative per-resource authz gate for the mutation endpoints: it
+    delegates to :func:`can_manage` (global ``datasette-acl`` perm OR a
+    per-resource ``manage=True`` role action) and raises rather than returning a
+    bool so handlers can guard with a single ``await``.
+    """
+    if not await can_manage(datasette, request.actor, resource_type, parent, child):
+        raise Forbidden("Cannot manage sharing for this resource")
 
 
 def _kind_for(actor_id, enriched):
@@ -117,6 +161,79 @@ async def _group_info(datasette, group_ids):
         row["id"]: {"name": row["name"], "member_count": row["member_count"]}
         for row in rows.rows
     }
+
+
+async def _actor_grant_entry(datasette, roles, actor_id, actions):
+    """Build the enriched API entry for one actor-principal grant.
+
+    Resolves the granted action-set to its best role, enriches via core
+    ``actors_from_ids`` (skipped for wildcard principals), and tags ``kind``.
+    """
+    role = role_for_actions(roles, set(actions))
+    enriched = {}
+    if actor_id not in PUBLIC_PRINCIPALS:
+        enriched = (await datasette.actors_from_ids([actor_id])) or {}
+    info = enriched.get(actor_id) or {}
+    entry = {
+        "principal": "actor",
+        "id": actor_id,
+        "role": role.name if role else None,
+        "actions": sorted(actions),
+        "kind": _kind_for(actor_id, info),
+    }
+    for key in ("display_name", "email", "avatar_url"):
+        if info.get(key):
+            entry[key] = info[key]
+    return entry
+
+
+async def _group_grant_entry(datasette, roles, group_id, actions):
+    """Build the enriched API entry for one group-principal grant."""
+    role = role_for_actions(roles, set(actions))
+    info = (await _group_info(datasette, [group_id])).get(group_id, {})
+    return {
+        "principal": "group",
+        "id": str(group_id),
+        "role": role.name if role else None,
+        "actions": sorted(actions),
+        "kind": "group",
+        "display_name": info.get("name"),
+        "member_count": info.get("member_count", 0),
+    }
+
+
+def _principal_from_body(body):
+    """Extract ``(actor_id, group_id)`` from a request body, enforcing exactly one.
+
+    Returns ``(actor_id, group_id)`` with exactly one non-None. Raises
+    ``ValueError`` if neither or both are supplied (mirrors the acl CHECK
+    invariant) so handlers can translate it to a 400.
+    """
+    actor_id = body.get("actor_id")
+    group_id = body.get("group_id")
+    if (actor_id is None) == (group_id is None):
+        raise ValueError("Provide exactly one of actor_id or group_id")
+    return actor_id, group_id
+
+
+def _parse_json_body(request_body):
+    """Parse the raw POST body as a JSON object, or raise ``ValueError``."""
+    if not request_body:
+        return {}
+    try:
+        data = json.loads(request_body)
+    except json.JSONDecodeError:
+        raise ValueError("Request body must be valid JSON")
+    if not isinstance(data, dict):
+        raise ValueError("Request body must be a JSON object")
+    return data
+
+
+async def _enriched_grant(datasette, roles, actor_id, group_id, actions):
+    """Build the enriched grant entry for whichever principal was supplied."""
+    if actor_id is not None:
+        return await _actor_grant_entry(datasette, roles, actor_id, actions)
+    return await _group_grant_entry(datasette, roles, group_id, actions)
 
 
 async def resource_grants_json(request, datasette):
@@ -196,3 +313,134 @@ async def resource_grants_json(request, datasette):
             "grants": grants,
         }
     )
+
+
+class _ApiError(Exception):
+    """Carries an HTTP status + message for a JSON error response."""
+
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+def _error_response(exc):
+    return Response.json({"ok": False, "error": exc.message}, status=exc.status)
+
+
+async def _begin_mutation(request, datasette):
+    """Shared preamble for the mutation endpoints.
+
+    Enforces POST, a known resource type, and the per-resource manage gate, then
+    parses the JSON body. Returns ``(resource_type, parent, child, roles,
+    body)``. Raises ``Forbidden`` (403) for the authz / unknown-type cases
+    (handled by core) and ``_ApiError`` for a bad method (405) or unparseable
+    body (400), which each handler catches and renders as a JSON error response.
+    """
+    if request.method != "POST":
+        raise _ApiError(405, "Method not allowed")
+    resource_type = request.url_vars["resource_type"]
+    parent = request.url_vars["parent"]
+    child = request.url_vars.get("child")
+    if resource_class_for(datasette, resource_type) is None:
+        raise Forbidden(f"Unknown resource type: {resource_type}")
+    # Per-resource authorization — the correctness fix over a global flag.
+    await _ensure_can_manage(datasette, request, resource_type, parent, child)
+    try:
+        body = _parse_json_body(await request.post_body())
+    except ValueError as exc:
+        raise _ApiError(400, str(exc))
+    roles = _roles_for(datasette, resource_type)
+    return resource_type, parent, child, roles, body
+
+
+async def grant_json(request, datasette):
+    """POST /-/acl/api/resource/{type}/{parent}/{child}/grant.
+
+    Body: ``{actor_id|group_id, role}`` or ``{actor_id|group_id, actions: [...]}``.
+    Upserts the grant (idempotent), audits, and returns the enriched grant.
+    """
+    try:
+        resource_type, parent, child, roles, body = await _begin_mutation(
+            request, datasette
+        )
+        actor_id, group_id = _principal_from_body(body)
+        by_actor = (request.actor or {}).get("id")
+        actions = await grant(
+            datasette,
+            resource_type,
+            parent,
+            child,
+            actor_id=actor_id,
+            group_id=group_id,
+            role=body.get("role"),
+            actions=body.get("actions"),
+            by_actor=by_actor,
+        )
+    except _ApiError as exc:
+        return _error_response(exc)
+    except ValueError as exc:
+        return _error_response(_ApiError(400, str(exc)))
+    entry = await _enriched_grant(datasette, roles, actor_id, group_id, actions)
+    return Response.json({"ok": True, "grant": entry})
+
+
+async def revoke_json(request, datasette):
+    """POST /-/acl/api/resource/{type}/{parent}/{child}/revoke.
+
+    Body: ``{actor_id}`` or ``{group_id}``. Deletes all acl rows for that
+    principal on this resource, audits each removal, returns ``{ok: true}``.
+    """
+    try:
+        resource_type, parent, child, roles, body = await _begin_mutation(
+            request, datasette
+        )
+        actor_id, group_id = _principal_from_body(body)
+        by_actor = (request.actor or {}).get("id")
+        removed = await revoke(
+            datasette,
+            resource_type,
+            parent,
+            child,
+            actor_id=actor_id,
+            group_id=group_id,
+            by_actor=by_actor,
+        )
+    except _ApiError as exc:
+        return _error_response(exc)
+    except ValueError as exc:
+        return _error_response(_ApiError(400, str(exc)))
+    return Response.json({"ok": True, "removed": removed})
+
+
+async def update_json(request, datasette):
+    """POST /-/acl/api/resource/{type}/{parent}/{child}/update.
+
+    Body: ``{actor_id|group_id, role}``. Atomically swaps the principal's action
+    set to the new role, audits each change, and returns the enriched grant.
+    """
+    try:
+        resource_type, parent, child, roles, body = await _begin_mutation(
+            request, datasette
+        )
+        actor_id, group_id = _principal_from_body(body)
+        role = body.get("role")
+        if not role:
+            raise _ApiError(400, "update requires a role")
+        by_actor = (request.actor or {}).get("id")
+        actions = await update_role(
+            datasette,
+            resource_type,
+            parent,
+            child,
+            actor_id=actor_id,
+            group_id=group_id,
+            role=role,
+            by_actor=by_actor,
+        )
+    except _ApiError as exc:
+        return _error_response(exc)
+    except ValueError as exc:
+        return _error_response(_ApiError(400, str(exc)))
+    entry = await _enriched_grant(datasette, roles, actor_id, group_id, actions)
+    return Response.json({"ok": True, "grant": entry})

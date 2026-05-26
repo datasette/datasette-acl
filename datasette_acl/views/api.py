@@ -45,7 +45,12 @@ from datasette import Response, Forbidden
 
 from datasette_acl.grants import grant, revoke, update_role, list_grants
 from datasette_acl.roles import role_for_actions, manage_only_actions
-from datasette_acl.utils import build_resource, resource_class_for, can_edit_permissions
+from datasette_acl.utils import (
+    build_resource,
+    resource_class_for,
+    can_edit_permissions,
+    get_acl_valid_actors,
+)
 
 # Wildcard / "general access" principals. These are stored as actor_id values in
 # acl rows but represent classes of actor rather than a specific person, so the
@@ -383,6 +388,123 @@ async def grant_json(request, datasette):
         return _error_response(_ApiError(400, str(exc)))
     entry = await _enriched_grant(datasette, roles, actor_id, group_id, actions)
     return Response.json({"ok": True, "grant": entry})
+
+
+# --- pickers ---------------------------------------------------------------
+#
+# The share dialog needs to populate the "add a person / group" boxes. Two
+# decoupled endpoints back that:
+#
+#   GET /-/acl/api/groups          -> the group picker, drawn from acl_groups.
+#   GET /-/acl/api/actors?q=&kind= -> the actor picker. The dialog MAY call the
+#     user-profiles search API directly; this endpoint is the decoupled fallback
+#     that delegates to profiles when installed and otherwise filters acl's own
+#     ``datasette_acl_valid_actors`` in Python, so the picker still works on an
+#     acl-only deployment (plan §C).
+#
+# Both gate on the global ``datasette-acl`` permission: listing every group /
+# directory actor is an admin-directory read, not a per-resource share read.
+# (The per-resource grant list endpoint above has its own per-resource gate.)
+
+
+async def groups_json(request, datasette):
+    """GET /-/acl/api/groups.
+
+    Returns ``{"groups": [{"id", "name", "member_count"}]}`` for every active
+    (non soft-deleted) group, with a member-count subquery. Gated by the global
+    ``datasette-acl`` permission.
+    """
+    if not await can_edit_permissions(datasette, request.actor):
+        raise Forbidden("Cannot list groups")
+    db = datasette.get_internal_database()
+    rows = await db.execute(
+        """
+        SELECT
+            acl_groups.id AS id,
+            acl_groups.name AS name,
+            count(acl_actor_groups.actor_id) AS member_count
+        FROM acl_groups
+        LEFT JOIN acl_actor_groups ON acl_groups.id = acl_actor_groups.group_id
+        WHERE acl_groups.deleted IS NULL
+        GROUP BY acl_groups.id, acl_groups.name
+        ORDER BY acl_groups.name
+        """
+    )
+    groups = [
+        {"id": row["id"], "name": row["name"], "member_count": row["member_count"]}
+        for row in rows.rows
+    ]
+    return Response.json({"groups": groups})
+
+
+async def _profiles_search(datasette, q, kind):
+    """Delegate the actor search to user-profiles' search API, if installed.
+
+    Issues an internal request to ``GET /-/profiles/api/search`` (carrying the
+    same query). Returns the parsed ``results`` list, or ``None`` when profiles
+    is not installed / the route is absent (so the caller falls back). Any error
+    response (e.g. 403) is treated as "no results" rather than propagated, since
+    this is an autocomplete helper.
+    """
+    params = {}
+    if q:
+        params["q"] = q
+    if kind:
+        params["kind"] = kind
+    try:
+        response = await datasette.client.get(
+            datasette.urls.path("/-/profiles/api/search"), params=params
+        )
+    except Exception:
+        return None
+    if response.status_code == 404:
+        return None
+    if response.status_code != 200:
+        return []
+    try:
+        data = response.json()
+    except Exception:
+        return []
+    return data.get("results", [])
+
+
+async def _valid_actors_fallback(datasette, q):
+    """Filter ``datasette_acl_valid_actors`` by ``q`` (substring, case-insensitive).
+
+    The acl-only fallback when user-profiles is not installed. ``valid_actors``
+    yields ``(id, display)`` pairs with no avatar/email, so the entries are
+    minimal: ``{"id", "display_name", "kind": "user"}``.
+    """
+    actors = await get_acl_valid_actors(datasette)
+    needle = (q or "").lower()
+    results = []
+    for actor_id, display in actors:
+        if needle and needle not in actor_id.lower() and needle not in (
+            display or ""
+        ).lower():
+            continue
+        results.append(
+            {"id": actor_id, "display_name": display, "kind": "user"}
+        )
+    return results
+
+
+async def actors_json(request, datasette):
+    """GET /-/acl/api/actors?q=&kind=.
+
+    Thin actor-autocomplete proxy. Delegates to the user-profiles search API
+    when available, else falls back to ``datasette_acl_valid_actors`` filtered by
+    ``q`` in Python. Returns ``{"results": [{"id", "display_name", "avatar_url",
+    "kind", ...}]}``. Gated by the global ``datasette-acl`` permission.
+    """
+    if not await can_edit_permissions(datasette, request.actor):
+        raise Forbidden("Cannot search actors")
+    q = (request.args.get("q") or "").strip()
+    kind = request.args.get("kind")
+    results = await _profiles_search(datasette, q, kind)
+    if results is None:
+        results = await _valid_actors_fallback(datasette, q)
+    return Response.json({"results": results})
 
 
 async def revoke_json(request, datasette):

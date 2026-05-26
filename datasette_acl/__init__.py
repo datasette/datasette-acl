@@ -12,6 +12,8 @@ from datasette_acl.views.api import (
     grant_json,
     revoke_json,
     update_json,
+    groups_json,
+    actors_json,
 )
 from datasette_acl.roles import build_roles_registry
 from . import hookspecs
@@ -311,6 +313,7 @@ def permission_resources_sql(datasette, actor, action):
         # General-access (wildcard) principals always apply:
         #   '*'          -> anyone, including anonymous
         #   '_signed_in' -> any actor that has an id (only when signed in)
+        #   '_anonymous' -> only unauthenticated callers (no actor id)
         # Direct actor grants and group grants only apply when signed in.
         # NOTE: this must be a single SELECT statement with no leading CTE
         # (WITH ...). Datasette core inlines this SQL after a "UNION ALL" when
@@ -341,6 +344,7 @@ WHERE aa.name = :action
     a.actor_id = '*'
     OR (:actor_id IS NOT NULL AND a.actor_id = :actor_id)
     OR (:actor_id IS NOT NULL AND a.actor_id = '_signed_in')
+    OR (:actor_id IS NULL AND a.actor_id = '_anonymous')
     OR a.group_id IN (
         SELECT ag.group_id
         FROM acl_actor_groups ag
@@ -491,6 +495,10 @@ def register_routes():
             "^/-/acl/api/resource/(?P<resource_type>[^/]+)/(?P<parent>[^/]+)/update$",
             update_json,
         ),
+        # JSON API pickers (phase-02/05): the share dialog's group + actor
+        # autocomplete sources. Both gate on the global datasette-acl permission.
+        ("^/-/acl/api/groups$", groups_json),
+        ("^/-/acl/api/actors$", actors_json),
         # JSON API read (phase-02/03). The child segment is optional so
         # parent-only resource types resolve through the same route.
         (

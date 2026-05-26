@@ -195,7 +195,7 @@ async def test_signed_in_wildcard_grant(widget_ds):
 
 
 @pytest.mark.asyncio
-async def test_anonymous_wildcard_grant(widget_ds):
+async def test_star_wildcard_grant(widget_ds):
     # Grant '*' => literally anyone, including anonymous
     await _grant_actor(widget_ds, "*", "widget", "shelf", "gadget", "widget-view")
     resource = WidgetResource("shelf", "gadget")
@@ -203,6 +203,22 @@ async def test_anonymous_wildcard_grant(widget_ds):
         action="widget-view", resource=resource, actor=None
     )
     assert await widget_ds.allowed(
+        action="widget-view", resource=resource, actor={"id": "anyone"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_anonymous_wildcard_grant(widget_ds):
+    # Grant '_anonymous' => only unauthenticated callers; a signed-in actor is not
+    # matched by this grant.
+    await _grant_actor(
+        widget_ds, "_anonymous", "widget", "shelf", "gadget", "widget-view"
+    )
+    resource = WidgetResource("shelf", "gadget")
+    assert await widget_ds.allowed(
+        action="widget-view", resource=resource, actor=None
+    )
+    assert not await widget_ds.allowed(
         action="widget-view", resource=resource, actor={"id": "anyone"}
     )
 

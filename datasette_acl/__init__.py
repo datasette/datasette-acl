@@ -222,8 +222,8 @@ WITH actor_groups AS (
 ),
 matching_permissions AS (
     SELECT
-        ar.database AS parent,
-        ar.resource AS child,
+        ar.parent AS parent,
+        ar.child AS child,
         CASE
             WHEN a.actor_id IS NOT NULL
                 THEN 'actor:' || a.actor_id
@@ -295,12 +295,12 @@ def track_event(datasette, event):
         db = datasette.get_internal_database()
         # Ensure resource exists for table
         await db.execute_write(
-            "INSERT OR IGNORE INTO acl_resources (database, resource) VALUES (?, ?);",
+            "INSERT OR IGNORE INTO acl_resources (resource_type, parent, child) VALUES ('table', ?, ?);",
             [event.database, event.table],
         )
         resource_id = (
             await db.execute(
-                "SELECT id FROM acl_resources WHERE database = ? AND resource = ?",
+                "SELECT id FROM acl_resources WHERE resource_type = 'table' AND parent = ? AND child = ?",
                 [event.database, event.table],
             )
         ).single_value()

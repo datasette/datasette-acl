@@ -81,3 +81,24 @@ def m001_initial(db: Database):
         foreign key (action_id) references acl_actions(id)
     );
     """)
+
+
+@internal_migrations()
+def m002_generalize_acl_resources(db: Database):
+    # Generalize acl_resources from the table-only (database, resource) shape to
+    # (resource_type, parent, child) so any resource type can be tracked.
+    # Existing rows are tables, so backfill resource_type='table', preserving
+    # ids. SQLite can't rename/retype columns in place, so rewrite the table.
+    db.executescript("""
+    ALTER TABLE acl_resources RENAME TO acl_resources_old;
+    CREATE TABLE acl_resources (
+        id integer primary key,
+        resource_type text not null,
+        parent text not null,
+        child text,
+        unique(resource_type, parent, child)
+    );
+    INSERT INTO acl_resources (id, resource_type, parent, child)
+        SELECT id, 'table', database, resource FROM acl_resources_old;
+    DROP TABLE acl_resources_old;
+    """)

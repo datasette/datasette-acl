@@ -24,12 +24,12 @@ async def manage_table_acls(request, datasette):
 
     # Ensure we have a resource_id for this table
     await internal_db.execute_write(
-        "INSERT OR IGNORE INTO acl_resources (database, resource) VALUES (?, ?);",
+        "INSERT OR IGNORE INTO acl_resources (resource_type, parent, child) VALUES ('table', ?, ?);",
         [database, table],
     )
     resource_id = (
         await internal_db.execute(
-            "SELECT id FROM acl_resources WHERE database = ? AND resource = ?",
+            "SELECT id FROM acl_resources WHERE resource_type = 'table' AND parent = ? AND child = ?",
             [database, table],
         )
     ).single_value()

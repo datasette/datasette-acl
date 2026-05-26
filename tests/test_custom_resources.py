@@ -39,6 +39,11 @@ class WidgetPlugin:
                 description="View a widget",
                 resource_class=WidgetResource,
             ),
+            Action(
+                name="widget-edit",
+                description="Edit a widget",
+                resource_class=WidgetResource,
+            ),
         ]
 
 
@@ -199,4 +204,126 @@ async def test_anonymous_wildcard_grant(widget_ds):
     )
     assert await widget_ds.allowed(
         action="widget-view", resource=resource, actor={"id": "anyone"}
+    )
+
+
+# csrftoken is unused in datasette 1.0a30 (header-based CSRF); the non-browser
+# test client needs no token. We pass a dummy string for form-field parity.
+DUMMY_CSRF = "csrf-not-required-in-datasette-1.0a30"
+
+
+@pytest.mark.asyncio
+async def test_generic_resource_view_lists_dynamic_actions(widget_ds):
+    # The generic admin page renders the action set discovered for this resource
+    # type (widget-view, widget-edit), not a hardcoded table list.
+    response = await widget_ds.client.get(
+        "/-/acl/resource/widget/shelf/gadget",
+        cookies={"ds_actor": widget_ds.client.actor_cookie({"id": "root"})},
+    )
+    assert response.status_code == 200
+    assert "Permissions for widget: shelf/gadget" in response.text
+    assert "widget-view" in response.text
+    assert "widget-edit" in response.text
+    # Table-only actions must not appear for a widget resource
+    assert "insert-row" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_generic_resource_view_requires_permission(widget_ds):
+    response = await widget_ds.client.get(
+        "/-/acl/resource/widget/shelf/gadget",
+        cookies={"ds_actor": widget_ds.client.actor_cookie({"id": "other"})},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_generic_resource_view_unknown_type(widget_ds):
+    response = await widget_ds.client.get(
+        "/-/acl/resource/nope/shelf/gadget",
+        cookies={"ds_actor": widget_ds.client.actor_cookie({"id": "root"})},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_generic_resource_view_grants_via_post(widget_ds):
+    actor = {"id": "alice"}
+    resource = WidgetResource("shelf", "gadget")
+    # No grant yet
+    assert not await widget_ds.allowed(
+        action="widget-edit", resource=resource, actor=actor
+    )
+    # Grant widget-edit to alice through the generic admin POST
+    response = await widget_ds.client.post(
+        "/-/acl/resource/widget/shelf/gadget",
+        data={
+            "new_actor_id": "alice",
+            "new_user_actions": "widget-edit",
+            "csrftoken": DUMMY_CSRF,
+        },
+        cookies={"ds_actor": widget_ds.client.actor_cookie({"id": "root"})},
+    )
+    assert response.status_code == 302
+
+    # The acl row exists for the right (resource_type, parent, child)
+    internal_db = widget_ds.get_internal_database()
+    rows = [
+        dict(r)
+        for r in (
+            await internal_db.execute(
+                """
+                select
+                  acl.actor_id,
+                  acl_actions.name as action_name,
+                  acl_resources.resource_type,
+                  acl_resources.parent,
+                  acl_resources.child
+                from acl
+                join acl_actions on acl.action_id = acl_actions.id
+                join acl_resources on acl.resource_id = acl_resources.id
+                """
+            )
+        )
+    ]
+    assert rows == [
+        {
+            "actor_id": "alice",
+            "action_name": "widget-edit",
+            "resource_type": "widget",
+            "parent": "shelf",
+            "child": "gadget",
+        }
+    ]
+
+    # And datasette.allowed reflects the new grant
+    assert await widget_ds.allowed(
+        action="widget-edit", resource=resource, actor=actor
+    )
+    # The other action is still denied
+    assert not await widget_ds.allowed(
+        action="widget-view", resource=resource, actor=actor
+    )
+
+
+@pytest.mark.asyncio
+async def test_generic_resource_view_revokes_via_post(widget_ds):
+    actor = {"id": "alice"}
+    resource = WidgetResource("shelf", "gadget")
+    await _grant_actor(widget_ds, "alice", "widget", "shelf", "gadget", "widget-edit")
+    assert await widget_ds.allowed(
+        action="widget-edit", resource=resource, actor=actor
+    )
+    # POST with the existing user's checkbox unchecked removes the grant
+    response = await widget_ds.client.post(
+        "/-/acl/resource/widget/shelf/gadget",
+        data={
+            "user_permissions_alice": "",
+            "csrftoken": DUMMY_CSRF,
+        },
+        cookies={"ds_actor": widget_ds.client.actor_cookie({"id": "root"})},
+    )
+    assert response.status_code == 302
+    assert not await widget_ds.allowed(
+        action="widget-edit", resource=resource, actor=actor
     )

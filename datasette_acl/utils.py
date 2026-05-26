@@ -7,6 +7,30 @@ async def can_edit_permissions(datasette, actor):
     return await datasette.allowed(actor=actor, action="datasette-acl")
 
 
+def resource_class_for(datasette, resource_type):
+    """Return the Resource subclass whose .name == resource_type, or None.
+
+    Resource types are discovered from registered actions (datasette.actions),
+    so any plugin that registers actions with a resource_class is manageable by
+    acl without a dedicated hook.
+    """
+    for action in datasette.actions.values():
+        rc = action.resource_class
+        if rc is not None and rc.name == resource_type:
+            return rc
+    return None
+
+
+def actions_for_resource_type(datasette, resource_type):
+    """Action names whose resource_class.name == resource_type, in registration order."""
+    return [
+        action.name
+        for action in datasette.actions.values()
+        if action.resource_class is not None
+        and action.resource_class.name == resource_type
+    ]
+
+
 def generate_changes_message(changes_made, noun):
     messages = []
     for action, changes in changes_made.items():

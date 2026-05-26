@@ -5,6 +5,7 @@ from datasette.utils import actor_matches_allow
 from datasette.plugins import pm
 from datasette_acl.utils import can_edit_permissions
 from datasette_acl.views.table_acls import manage_table_acls
+from datasette_acl.views.resource_acls import manage_resource_acls
 from datasette_acl.views.groups import manage_groups, manage_group
 from datasette_acl.internal_migrations import internal_migrations
 from sqlite_utils import Database
@@ -360,4 +361,14 @@ def register_routes():
         ("^/(?P<database>[^/]+)/(?P<table>[^/]+)/-/acl$", manage_table_acls),
         ("^/-/acl/groups$", manage_groups),
         ("^/-/acl/groups/(?P<name>[^/]+)$", manage_group),
+        # Generic per-resource-type admin page. The child segment is optional
+        # so parent-only resource types (e.g. a database) are also managed here.
+        (
+            "^/-/acl/resource/(?P<resource_type>[^/]+)/(?P<parent>[^/]+)/(?P<child>[^/]+)$",
+            manage_resource_acls,
+        ),
+        (
+            "^/-/acl/resource/(?P<resource_type>[^/]+)/(?P<parent>[^/]+)$",
+            manage_resource_acls,
+        ),
     ]

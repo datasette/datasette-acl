@@ -8,6 +8,7 @@ from datasette_acl.views.table_acls import manage_table_acls
 from datasette_acl.views.resource_acls import manage_resource_acls
 from datasette_acl.views.groups import manage_groups, manage_group
 from datasette_acl.internal_migrations import internal_migrations
+from datasette_acl.roles import build_roles_registry
 from sqlite_utils import Database
 from . import hookspecs
 import json
@@ -75,6 +76,10 @@ def startup(datasette):
                 "insert or ignore into acl_groups (name) values (:name)",
                 [{"name": name} for name in groups.keys()],
             )
+        # Collect friendly roles declared by plugins via datasette_acl_roles
+        # into a registry keyed by resource_type and stash it on datasette.
+        # Re-gathering is cheap; we do it once at startup.
+        datasette._acl_roles_registry = await build_roles_registry(datasette)
 
     return inner
 

@@ -31,6 +31,31 @@ def actions_for_resource_type(datasette, resource_type):
     ]
 
 
+def build_resource(datasette, resource_type, parent, child=None):
+    """Build a core ``Resource`` instance for ``(resource_type, parent, child)``.
+
+    The acl JSON API and consumer data-migrations receive resources as strings
+    but ``datasette.allowed()`` needs a ``Resource`` instance. We discover the
+    resource class from the registered actions (see ``resource_class_for``) and
+    construct it.
+
+    Constructor convention: ``Resource.__init__(parent, child)`` accepts both
+    positionally. A 2-level resource type (``parent_class`` set, e.g. a table
+    inside a database) is built as ``rc(parent, child)``; a parent-only type
+    (``parent_class is None``) is built as ``rc(parent)``. Consumers whose
+    constructors do not follow this positional convention should add a
+    ``from_parent_child`` classmethod (none do today).
+
+    Raises ``ValueError`` if ``resource_type`` is unknown.
+    """
+    rc = resource_class_for(datasette, resource_type)
+    if rc is None:
+        raise ValueError(f"Unknown resource type: {resource_type}")
+    if rc.parent_class is not None:
+        return rc(parent, child)
+    return rc(parent)
+
+
 def generate_changes_message(changes_made, noun):
     messages = []
     for action, changes in changes_made.items():

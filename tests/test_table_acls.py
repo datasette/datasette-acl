@@ -627,3 +627,26 @@ async def test_table_actions(ds, should_work):
         assert has_link
     else:
         assert not has_link
+
+
+@pytest.mark.asyncio
+async def test_table_acl_page_actions_are_dynamic(ds):
+    # The table permissions page should offer the action set discovered from
+    # datasette.actions (every TableResource-scoped action), not a hardcoded
+    # subset. Core registers view-table and set-column-type beyond the original
+    # five, so their presence proves discovery is dynamic.
+    response = await ds.client.get(
+        "/db/t/-/acl",
+        cookies={"ds_actor": ds.client.actor_cookie({"id": "root"})},
+    )
+    assert response.status_code == 200
+    for action in (
+        "insert-row",
+        "delete-row",
+        "update-row",
+        "alter-table",
+        "drop-table",
+        "view-table",
+        "set-column-type",
+    ):
+        assert action in response.text

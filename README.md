@@ -33,6 +33,41 @@ Permission can be granted for each of the above table actions. They can be assig
 
 An audit log tracks which permissions were added and removed, displayed at the bottom of the table permissions page.
 
+### Custom resource types
+
+`datasette-acl` is not limited to tables. It can store and resolve grants for *any* resource type defined by a plugin - documents, lists, workbooks, comment spaces, kanban boards and so on.
+
+There is no dedicated hook for this. A plugin makes its resource type manageable by `datasette-acl` simply by registering actions whose `resource_class` is a [Resource](https://docs.datasette.io/en/latest/internals.html) subclass:
+
+```python
+from datasette import hookimpl
+from datasette.permissions import Action, Resource
+
+
+class PaperDoc(Resource):
+    name = "paper-doc"
+
+
+@hookimpl
+def register_actions(datasette):
+    return [
+        Action(name="paper-view", description="View a doc", resource_class=PaperDoc),
+        Action(name="paper-edit", description="Edit a doc", resource_class=PaperDoc),
+    ]
+```
+
+`datasette-acl` discovers resource types from the actions registered across all plugins (`datasette.actions`). Both the action set offered on the table permissions page and the resource types managed by the generic admin page are derived dynamically from this - nothing is hardcoded.
+
+A generic admin page for any resource type lives at:
+
+```
+/-/acl/resource/<resource-type>/<parent>/<child>
+```
+
+For example `/-/acl/resource/paper-doc/workspace-1/doc-42`. The `<child>` segment is optional for parent-only resource types (`/-/acl/resource/<resource-type>/<parent>`). The page presents the same group/user grant interface and audit log as the table page, with checkboxes for exactly the actions registered for that resource type. Access to this admin page is gated on the `datasette-acl` permission described below.
+
+Grants made here flow through Datasette's permission system: once granted, `await datasette.allowed(actor=..., action="paper-edit", resource=PaperDoc("workspace-1", "doc-42"))` returns `True`.
+
 ### Controlling who can edit permissions
 
 Users with the new `datasette-acl` permission will have the ability to access a UI for setting permissions for users and groups on a table.

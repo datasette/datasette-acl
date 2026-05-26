@@ -16,13 +16,20 @@ on the global ``datasette-acl`` permission. Wildcard / public principals
 from datasette import hookimpl
 from datasette import Response
 from datasette.app import Datasette
+from datasette.permissions import Action, Resource
 from datasette.plugins import pm
+from datasette_acl.grants import grant
+from datasette_acl.roles import AclRole
 import pytest
 import pytest_asyncio
 
 
 def _root_cookie(datasette):
     return {"ds_actor": datasette.client.actor_cookie({"id": "root"})}
+
+
+def _cookie(datasette, actor_id):
+    return {"ds_actor": datasette.client.actor_cookie({"id": actor_id})}
 
 
 # --- groups picker --------------------------------------------------------
@@ -227,3 +234,149 @@ async def test_actors_delegates_q_to_profiles(profiles_ds):
     )
     results = response.json()["results"]
     assert [r["id"] for r in results] == ["evan"]
+
+
+# --- per-resource authorization (the share-dialog Manager) -----------------
+#
+# The share dialog is driven by per-resource Managers (a doc owner) who do NOT
+# hold the global ``datasette-acl`` permission. They authorize the pickers by
+# passing the dialog's resource (resource_type / parent / child); the endpoints
+# then run the same per-resource ``can_manage`` gate the read + mutation
+# endpoints use. Omitting the resource still requires global admin.
+
+
+class DocResource(Resource):
+    """Parent-only mock resource type for the per-resource picker tests."""
+
+    name = "mock-doc"
+    parent_class = None
+
+    def __init__(self, parent, child=None):
+        super().__init__(parent=parent, child=child)
+
+    @classmethod
+    async def resources_sql(cls, datasette, actor=None):
+        return "SELECT '42' AS parent, NULL AS child"
+
+
+DOC_ROLES = [
+    AclRole("mock-doc", "Viewer", ["doc-view"], rank=1),
+    AclRole("mock-doc", "Editor", ["doc-view", "doc-edit"], rank=2),
+    AclRole(
+        "mock-doc",
+        "Manager",
+        ["doc-view", "doc-edit", "doc-manage"],
+        rank=3,
+        manage=True,
+    ),
+]
+
+
+class DocPickerPlugin:
+    __name__ = "DocPickerPlugin"
+
+    @hookimpl
+    def register_actions(self, datasette):
+        return [
+            Action(name="doc-view", description="View", resource_class=DocResource),
+            Action(name="doc-edit", description="Edit", resource_class=DocResource),
+            Action(
+                name="doc-manage", description="Manage", resource_class=DocResource
+            ),
+        ]
+
+    @hookimpl
+    def datasette_acl_roles(self, datasette):
+        return list(DOC_ROLES)
+
+
+@pytest_asyncio.fixture
+async def resource_ds():
+    pm.register(DocPickerPlugin(), name="doc-picker-plugin")
+    try:
+        datasette = Datasette(
+            config={"permissions": {"datasette-acl": {"id": "root"}}}
+        )
+        await datasette.invoke_startup()
+        db = datasette.get_internal_database()
+        await db.execute_write("INSERT INTO acl_groups (name) VALUES ('staff')")
+        # bruce is a per-resource Manager (no global admin).
+        await grant(
+            datasette, "mock-doc", "42", actor_id="bruce", role="Manager",
+            by_actor="root",
+        )
+        yield datasette
+        for table in await db.table_names():
+            if table.startswith("acl"):
+                await db.execute_write(f"drop table {table}")
+    finally:
+        pm.unregister(name="doc-picker-plugin")
+
+
+_RES = "resource_type=mock-doc&parent=42"
+
+
+@pytest.mark.asyncio
+async def test_manager_can_use_groups_picker_with_resource(resource_ds):
+    # bruce is not a global admin but manages mock-doc/42, so passing the
+    # resource lets him list groups.
+    response = await resource_ds.client.get(
+        f"/-/acl/api/groups?{_RES}", cookies=_cookie(resource_ds, "bruce")
+    )
+    assert response.status_code == 200
+    names = {g["name"] for g in response.json()["groups"]}
+    assert "staff" in names
+
+
+@pytest.mark.asyncio
+async def test_manager_can_use_actors_picker_with_resource(resource_ds):
+    response = await resource_ds.client.get(
+        f"/-/acl/api/actors?{_RES}", cookies=_cookie(resource_ds, "bruce")
+    )
+    assert response.status_code == 200
+    assert "results" in response.json()
+
+
+@pytest.mark.asyncio
+async def test_non_manager_cannot_use_pickers_with_resource(resource_ds):
+    # mallory holds no manage action on the resource and is not global admin.
+    for path in (
+        f"/-/acl/api/groups?{_RES}",
+        f"/-/acl/api/actors?{_RES}",
+    ):
+        response = await resource_ds.client.get(
+            path, cookies=_cookie(resource_ds, "mallory")
+        )
+        assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_anonymous_cannot_use_pickers_with_resource(resource_ds):
+    for path in (
+        f"/-/acl/api/groups?{_RES}",
+        f"/-/acl/api/actors?{_RES}",
+    ):
+        response = await resource_ds.client.get(path)
+        assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_manager_without_resource_still_requires_global_admin(resource_ds):
+    # Without the resource params, the global-admin fallback applies, so a
+    # per-resource Manager who lacks global admin is rejected (existing behavior).
+    for path in ("/-/acl/api/groups", "/-/acl/api/actors"):
+        response = await resource_ds.client.get(
+            path, cookies=_cookie(resource_ds, "bruce")
+        )
+        assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_global_admin_still_works_without_resource(resource_ds):
+    # root holds the global datasette-acl permission → pickers work with no
+    # resource params (back-compat).
+    for path in ("/-/acl/api/groups", "/-/acl/api/actors"):
+        response = await resource_ds.client.get(
+            path, cookies=_root_cookie(resource_ds)
+        )
+        assert response.status_code == 200

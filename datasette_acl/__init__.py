@@ -17,9 +17,10 @@ pm.add_hookspecs(hookspecs)
 CREATE_TABLES_SQL = """
 create table if not exists acl_resources (
     id integer primary key,
-    database text not null,
-    resource text,
-    unique(database, resource)
+    resource_type text not null,
+    parent text not null,
+    child text,
+    unique(resource_type, parent, child)
 );
 
 create table if not exists acl_actions (
@@ -122,6 +123,28 @@ def startup(datasette):
     async def inner():
         db = datasette.get_internal_database()
         await db.execute_write_script(CREATE_TABLES_SQL)
+        # Migrate old acl_resources (database, resource) schema to the
+        # generalized (resource_type, parent, child) schema. Feature-detect by
+        # probing for the resource_type column; if it is missing we have the
+        # old schema and rewrite the table, backfilling resource_type='table'.
+        try:
+            await db.execute("select resource_type from acl_resources limit 0")
+        except Exception:
+            await db.execute_write_script(
+                """
+                ALTER TABLE acl_resources RENAME TO acl_resources_old;
+                CREATE TABLE acl_resources (
+                    id integer primary key,
+                    resource_type text not null,
+                    parent text not null,
+                    child text,
+                    unique(resource_type, parent, child)
+                );
+                INSERT INTO acl_resources (id, resource_type, parent, child)
+                    SELECT id, 'table', database, resource FROM acl_resources_old;
+                DROP TABLE acl_resources_old;
+                """
+            )
         # Ensure permissions are in the DB
         await db.execute_write_many(
             """
@@ -284,8 +307,8 @@ WITH actor_groups AS (
 ),
 matching_permissions AS (
     SELECT
-        ar.database AS parent,
-        ar.resource AS child,
+        ar.parent AS parent,
+        ar.child AS child,
         CASE
             WHEN a.actor_id IS NOT NULL
                 THEN 'actor:' || a.actor_id
@@ -357,12 +380,12 @@ def track_event(datasette, event):
         db = datasette.get_internal_database()
         # Ensure resource exists for table
         await db.execute_write(
-            "INSERT OR IGNORE INTO acl_resources (database, resource) VALUES (?, ?);",
+            "INSERT OR IGNORE INTO acl_resources (resource_type, parent, child) VALUES ('table', ?, ?);",
             [event.database, event.table],
         )
         resource_id = (
             await db.execute(
-                "SELECT id FROM acl_resources WHERE database = ? AND resource = ?",
+                "SELECT id FROM acl_resources WHERE resource_type = 'table' AND parent = ? AND child = ?",
                 [event.database, event.table],
             )
         ).single_value()

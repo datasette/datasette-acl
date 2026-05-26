@@ -402,20 +402,45 @@ async def grant_json(request, datasette):
 #     ``datasette_acl_valid_actors`` in Python, so the picker still works on an
 #     acl-only deployment (plan §C).
 #
-# Both gate on the global ``datasette-acl`` permission: listing every group /
-# directory actor is an admin-directory read, not a per-resource share read.
-# (The per-resource grant list endpoint above has its own per-resource gate.)
+# Authorization: the share dialog is driven by per-resource Managers (a doc
+# owner) who don't hold the global ``datasette-acl`` admin permission, so the
+# pickers accept OPTIONAL ``resource_type`` / ``parent`` / ``child`` query
+# params. When supplied, the request is authorized via the same per-resource
+# :func:`can_manage` gate the read + mutation endpoints use (global admin OR a
+# ``manage=True`` role action on that specific resource). When omitted, we fall
+# back to the global ``datasette-acl`` permission (back-compat for acl's own
+# admin pages). Neither passing → ``Forbidden``.
+
+
+async def _ensure_can_pick(datasette, request, message):
+    """Authorize a picker request.
+
+    If ``resource_type`` / ``parent`` (+ optional ``child``) query params are
+    present, authorize against the per-resource :func:`can_manage` gate.
+    Otherwise fall back to the global ``datasette-acl`` admin check. Raises
+    ``Forbidden(message)`` when neither passes.
+    """
+    resource_type = request.args.get("resource_type")
+    parent = request.args.get("parent")
+    if resource_type and parent:
+        child = request.args.get("child")
+        if await can_manage(datasette, request.actor, resource_type, parent, child):
+            return
+        raise Forbidden(message)
+    if await can_edit_permissions(datasette, request.actor):
+        return
+    raise Forbidden(message)
 
 
 async def groups_json(request, datasette):
-    """GET /-/acl/api/groups.
+    """GET /-/acl/api/groups[?resource_type=&parent=&child=].
 
     Returns ``{"groups": [{"id", "name", "member_count"}]}`` for every active
-    (non soft-deleted) group, with a member-count subquery. Gated by the global
-    ``datasette-acl`` permission.
+    (non soft-deleted) group, with a member-count subquery. Authorized per
+    :func:`_ensure_can_pick`: a per-resource Manager (when the resource is
+    supplied) or the global ``datasette-acl`` admin.
     """
-    if not await can_edit_permissions(datasette, request.actor):
-        raise Forbidden("Cannot list groups")
+    await _ensure_can_pick(datasette, request, "Cannot list groups")
     db = datasette.get_internal_database()
     rows = await db.execute(
         """
@@ -490,15 +515,16 @@ async def _valid_actors_fallback(datasette, q):
 
 
 async def actors_json(request, datasette):
-    """GET /-/acl/api/actors?q=&kind=.
+    """GET /-/acl/api/actors?q=&kind=[&resource_type=&parent=&child=].
 
     Thin actor-autocomplete proxy. Delegates to the user-profiles search API
     when available, else falls back to ``datasette_acl_valid_actors`` filtered by
     ``q`` in Python. Returns ``{"results": [{"id", "display_name", "avatar_url",
-    "kind", ...}]}``. Gated by the global ``datasette-acl`` permission.
+    "kind", ...}]}``. Authorized per :func:`_ensure_can_pick`: a per-resource
+    Manager (when the resource is supplied) or the global ``datasette-acl``
+    admin.
     """
-    if not await can_edit_permissions(datasette, request.actor):
-        raise Forbidden("Cannot search actors")
+    await _ensure_can_pick(datasette, request, "Cannot search actors")
     q = (request.args.get("q") or "").strip()
     kind = request.args.get("kind")
     results = await _profiles_search(datasette, q, kind)

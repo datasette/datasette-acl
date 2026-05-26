@@ -42,10 +42,10 @@ async def ds():
 
 @pytest_asyncio.fixture
 async def csrftoken(ds):
-    csrf_token_response = await ds.client.get(
-        "/db/t/-/acl",
-        cookies={
-            "ds_actor": ds.client.actor_cookie({"id": "root"}),
-        },
-    )
-    return csrf_token_response.cookies["ds_csrftoken"]
+    # Datasette 1.0a30 replaced token-based asgi-csrf with header-based
+    # CrossOriginProtectionMiddleware (Sec-Fetch-Site + Origin). There is no
+    # longer a ds_csrftoken cookie. The test client is a non-browser client
+    # (sends neither Sec-Fetch-Site nor Origin) so unsafe-method requests pass
+    # through unchanged and no token is required. This value is still accepted
+    # in form posts but is unused. See datasette/csrf.py.
+    return "csrf-not-required-in-datasette-1.0a30"

@@ -553,8 +553,13 @@ async def test_table_actions(ds, should_work):
             ),
         },
     )
-    fragment = '<a href="/db/t/-/acl">Manage table permissions'
+    # 1.0a30 renders menu links with extra attrs (role/tabindex), so match the
+    # href + label rather than an exact anchor tag.
+    has_link = (
+        'href="/db/t/-/acl"' in response.text
+        and "Manage table permissions" in response.text
+    )
     if should_work:
-        assert fragment in response.text
+        assert has_link
     else:
-        assert fragment not in response.text
+        assert not has_link

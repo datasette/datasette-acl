@@ -12,6 +12,7 @@ from datasette_acl.roles import (
     role_for_actions,
     actions_for_role,
     manage_actions,
+    manage_only_actions,
 )
 import pytest
 import pytest_asyncio
@@ -127,3 +128,19 @@ def test_manage_actions_empty_when_no_manage_role():
         AclRole("mock-doc", "Editor", ["doc-view", "doc-edit"], rank=2),
     ]
     assert manage_actions(roles) == set()
+
+
+def test_manage_only_actions_excludes_shared_actions():
+    # The manage gate must authorize against only the action(s) exclusive to a
+    # manage role; the bundled view/edit actions must NOT count (otherwise any
+    # Viewer/Editor would pass the manage check).
+    roles = list(MOCK_ROLES)
+    assert manage_only_actions(roles) == {"doc-manage"}
+
+
+def test_manage_only_actions_empty_when_no_manage_role():
+    roles = [
+        AclRole("mock-doc", "Viewer", ["doc-view"], rank=1),
+        AclRole("mock-doc", "Editor", ["doc-view", "doc-edit"], rank=2),
+    ]
+    assert manage_only_actions(roles) == set()

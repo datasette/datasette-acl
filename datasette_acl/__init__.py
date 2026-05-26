@@ -7,7 +7,12 @@ from datasette_acl.utils import can_edit_permissions
 from datasette_acl.views.table_acls import manage_table_acls
 from datasette_acl.views.resource_acls import manage_resource_acls
 from datasette_acl.views.groups import manage_groups, manage_group
-from datasette_acl.views.api import resource_grants_json
+from datasette_acl.views.api import (
+    resource_grants_json,
+    grant_json,
+    revoke_json,
+    update_json,
+)
 from datasette_acl.roles import build_roles_registry
 from . import hookspecs
 import json
@@ -458,8 +463,36 @@ def register_routes():
             "^/-/acl/resource/(?P<resource_type>[^/]+)/(?P<parent>[^/]+)$",
             manage_resource_acls,
         ),
-        # JSON API (phase-02). The child segment is optional so parent-only
-        # resource types resolve through the same route.
+        # JSON API mutations (phase-02/04). Registered BEFORE the read routes so
+        # the trailing /grant|/revoke|/update verb isn't swallowed as a {child}
+        # path segment by the generic read route. The child segment is optional
+        # so parent-only resource types resolve through both variants.
+        (
+            "^/-/acl/api/resource/(?P<resource_type>[^/]+)/(?P<parent>[^/]+)/(?P<child>[^/]+)/grant$",
+            grant_json,
+        ),
+        (
+            "^/-/acl/api/resource/(?P<resource_type>[^/]+)/(?P<parent>[^/]+)/grant$",
+            grant_json,
+        ),
+        (
+            "^/-/acl/api/resource/(?P<resource_type>[^/]+)/(?P<parent>[^/]+)/(?P<child>[^/]+)/revoke$",
+            revoke_json,
+        ),
+        (
+            "^/-/acl/api/resource/(?P<resource_type>[^/]+)/(?P<parent>[^/]+)/revoke$",
+            revoke_json,
+        ),
+        (
+            "^/-/acl/api/resource/(?P<resource_type>[^/]+)/(?P<parent>[^/]+)/(?P<child>[^/]+)/update$",
+            update_json,
+        ),
+        (
+            "^/-/acl/api/resource/(?P<resource_type>[^/]+)/(?P<parent>[^/]+)/update$",
+            update_json,
+        ),
+        # JSON API read (phase-02/03). The child segment is optional so
+        # parent-only resource types resolve through the same route.
         (
             "^/-/acl/api/resource/(?P<resource_type>[^/]+)/(?P<parent>[^/]+)/(?P<child>[^/]+)$",
             resource_grants_json,

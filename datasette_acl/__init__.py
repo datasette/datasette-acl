@@ -1,7 +1,6 @@
 from datasette import hookimpl
 from datasette.events import CreateTableEvent
 from datasette.permissions import Action, PermissionSQL
-from datasette.resources import TableResource
 from datasette.utils import actor_matches_allow
 from datasette.plugins import pm
 from datasette_acl.utils import can_edit_permissions
@@ -202,54 +201,64 @@ def permission_resources_sql(datasette, actor, action):
     if not action_obj:
         return None
     resource_class = action_obj.resource_class
-    if resource_class is None or not issubclass(resource_class, TableResource):
+    if resource_class is None:
+        # Global-only actions: nothing for ACL to contribute
         return None
 
     async def inner():
-        if not actor or not actor.get("id"):
-            return None
-        await update_dynamic_groups(
-            datasette, actor, skip_cache=hasattr(sys, "_pytest_running")
-        )
+        actor_id = actor.get("id") if actor else None
+        if actor_id:
+            await update_dynamic_groups(
+                datasette, actor, skip_cache=hasattr(sys, "_pytest_running")
+            )
+        # General-access (wildcard) principals always apply:
+        #   '*'          -> anyone, including anonymous
+        #   '_signed_in' -> any actor that has an id (only when signed in)
+        # Direct actor grants and group grants only apply when signed in.
+        # NOTE: this must be a single SELECT statement with no leading CTE
+        # (WITH ...). Datasette core inlines this SQL after a "UNION ALL" when
+        # building its anon_rules block for include_is_private queries, and a
+        # leading WITH there is a SQLite syntax error. The actor-groups lookup
+        # is therefore expressed as an inline subquery rather than a CTE.
         return PermissionSQL(
             sql="""
-WITH actor_groups AS (
-    SELECT ag.group_id
-    FROM acl_actor_groups ag
-    JOIN acl_groups g ON ag.group_id = g.id
-    WHERE ag.actor_id = :actor_id
-      AND g.deleted IS NULL
-),
-matching_permissions AS (
-    SELECT
-        ar.parent AS parent,
-        ar.child AS child,
+SELECT
+    ar.parent AS parent,
+    ar.child AS child,
+    1 AS allow,
+    'datasette-acl: ' || GROUP_CONCAT(
         CASE
             WHEN a.actor_id IS NOT NULL
                 THEN 'actor:' || a.actor_id
             ELSE 'group:' || g.name
-        END AS reason_component
-    FROM acl a
-    JOIN acl_actions aa ON a.action_id = aa.id
-    JOIN acl_resources ar ON a.resource_id = ar.id
-    LEFT JOIN acl_groups g ON a.group_id = g.id
-    WHERE aa.name = :action
-      AND (
-        a.actor_id = :actor_id
-        OR a.group_id IN (SELECT group_id FROM actor_groups)
-      )
-      AND (a.group_id IS NULL OR g.deleted IS NULL)
-)
-SELECT
-    parent,
-    child,
-    1 AS allow,
-    'datasette-acl: ' || GROUP_CONCAT(reason_component, ', ') AS reason
-FROM matching_permissions
-GROUP BY parent, child
+        END,
+        ', '
+    ) AS reason
+FROM acl a
+JOIN acl_actions aa ON a.action_id = aa.id
+JOIN acl_resources ar ON a.resource_id = ar.id
+LEFT JOIN acl_groups g ON a.group_id = g.id
+WHERE aa.name = :action
+  AND ar.resource_type = :resource_type
+  AND (
+    a.actor_id = '*'
+    OR (:actor_id IS NOT NULL AND a.actor_id = :actor_id)
+    OR (:actor_id IS NOT NULL AND a.actor_id = '_signed_in')
+    OR a.group_id IN (
+        SELECT ag.group_id
+        FROM acl_actor_groups ag
+        JOIN acl_groups ig ON ag.group_id = ig.id
+        WHERE :actor_id IS NOT NULL
+          AND ag.actor_id = :actor_id
+          AND ig.deleted IS NULL
+    )
+  )
+  AND (a.group_id IS NULL OR g.deleted IS NULL)
+GROUP BY ar.parent, ar.child
             """,
             params={
-                "actor_id": actor["id"],
+                "actor_id": actor_id,
+                "resource_type": resource_class.name,
             },
         )
 

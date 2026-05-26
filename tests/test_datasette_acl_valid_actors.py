@@ -29,7 +29,7 @@ def register_plugin():
 
 
 @pytest.mark.asyncio
-async def test_datasette_acl_valid_actors(ds, csrftoken, register_plugin):
+async def test_datasette_acl_valid_actors(ds, register_plugin):
     plugins_response = await ds.client.get("/-/plugins.json")
     assert any(
         plugin
@@ -58,11 +58,9 @@ async def test_datasette_acl_valid_actors(ds, csrftoken, register_plugin):
             data={
                 "new_actor_id": actor_id,
                 "new_user_actions": "insert-row",
-                "csrftoken": csrftoken,
             },
             cookies={
                 "ds_actor": ds.client.actor_cookie({"id": "root"}),
-                "ds_csrftoken": csrftoken,
             },
         )
         assert response.status_code == 302
@@ -79,11 +77,9 @@ async def test_datasette_acl_valid_actors(ds, csrftoken, register_plugin):
             "/-/acl/groups/dev",
             data={
                 "add": actor_id,
-                "csrftoken": csrftoken,
             },
             cookies={
                 "ds_actor": ds.client.actor_cookie({"id": "root"}),
-                "ds_csrftoken": csrftoken,
             },
         )
         assert response.status_code == 302

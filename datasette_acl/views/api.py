@@ -462,7 +462,7 @@ async def groups_json(request, datasette):
     return Response.json({"groups": groups})
 
 
-async def _profiles_search(datasette, q, kind):
+async def _profiles_search(datasette, q, kind, actor):
     """Delegate the actor search to user-profiles' search API, if installed.
 
     Issues an internal request to ``GET /-/profiles/api/search`` (carrying the
@@ -470,6 +470,13 @@ async def _profiles_search(datasette, q, kind):
     is not installed / the route is absent (so the caller falls back). Any error
     response (e.g. 403) is treated as "no results" rather than propagated, since
     this is an autocomplete helper.
+
+    ``actor`` is the caller's actor. The internal ``datasette.client`` request is
+    otherwise anonymous, so profiles' ``profile_access`` gate would 403 it and we
+    would silently return no results. We forward the caller's identity via the
+    ``actor=`` kwarg, which signs a ``ds_actor`` cookie for the internal request,
+    so the gate evaluates against the real caller (just as the share dialog's
+    direct browser call does).
     """
     params = {}
     if q:
@@ -478,7 +485,9 @@ async def _profiles_search(datasette, q, kind):
         params["kind"] = kind
     try:
         response = await datasette.client.get(
-            datasette.urls.path("/-/profiles/api/search"), params=params
+            datasette.urls.path("/-/profiles/api/search"),
+            params=params,
+            actor=actor,
         )
     except Exception:
         return None
@@ -527,7 +536,7 @@ async def actors_json(request, datasette):
     await _ensure_can_pick(datasette, request, "Cannot search actors")
     q = (request.args.get("q") or "").strip()
     kind = request.args.get("kind")
-    results = await _profiles_search(datasette, q, kind)
+    results = await _profiles_search(datasette, q, kind, request.actor)
     if results is None:
         results = await _valid_actors_fallback(datasette, q)
     return Response.json({"results": results})

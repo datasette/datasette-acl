@@ -236,6 +236,73 @@ async def test_actors_delegates_q_to_profiles(profiles_ds):
     assert [r["id"] for r in results] == ["evan"]
 
 
+# --- actors picker: the proxy forwards the caller's identity ---------------
+#
+# The actor picker proxies to profiles' search API via an internal
+# ``datasette.client`` request. That request is anonymous by default, so a
+# profiles ``profile_access`` gate would 403 it and the proxy would silently
+# return no results. The fix forwards ``request.actor`` on the internal call.
+# This fake search route enforces the same identity gate so the test fails if
+# the caller's actor is not forwarded.
+
+
+async def _gated_profiles_search(request, datasette):
+    """Stand-in for profiles' search API that enforces a ``profile_access`` gate.
+
+    Returns 403 unless the (forwarded) caller is the actor that holds access.
+    """
+    if not (request.actor and request.actor.get("id") == "root"):
+        return Response.json({"error": "forbidden"}, status=403)
+    return await _fake_profiles_search(request, datasette)
+
+
+class GatedProfilesPlugin:
+    __name__ = "GatedProfilesPlugin"
+
+    @hookimpl
+    def register_routes(self):
+        return [("^/-/profiles/api/search$", _gated_profiles_search)]
+
+    @hookimpl
+    def datasette_acl_valid_actors(self, datasette):
+        # If the gated delegation returns 403, the proxy must NOT silently fall
+        # back to these — it returns an empty list. So these never appear.
+        return [{"id": "fallback-leak", "display": "Fallback Leak"}]
+
+
+@pytest_asyncio.fixture
+async def gated_profiles_ds():
+    pm.register(GatedProfilesPlugin(), name="gated-profiles-plugin")
+    try:
+        datasette = Datasette(
+            config={"permissions": {"datasette-acl": {"id": "root"}}}
+        )
+        await datasette.invoke_startup()
+        yield datasette
+        db = datasette.get_internal_database()
+        for table in await db.table_names():
+            if table.startswith("acl"):
+                await db.execute_write(f"drop table {table}")
+    finally:
+        pm.unregister(name="gated-profiles-plugin")
+
+
+@pytest.mark.asyncio
+async def test_actors_forwards_actor_to_gated_profiles(gated_profiles_ds):
+    # root passes the proxy's own datasette-acl admin gate AND the downstream
+    # profiles profile_access gate — but only if the internal request carries
+    # root's identity. This is the regression test for the identity-forwarding
+    # bug: an anonymous internal call would 403 and return an empty list.
+    response = await gated_profiles_ds.client.get(
+        "/-/acl/api/actors", cookies=_root_cookie(gated_profiles_ds)
+    )
+    assert response.status_code == 200
+    ids = {r["id"] for r in response.json()["results"]}
+    assert ids == {"dora", "evan"}
+    # The fallback was not consulted (the gated delegation succeeded).
+    assert "fallback-leak" not in ids
+
+
 # --- per-resource authorization (the share-dialog Manager) -----------------
 #
 # The share dialog is driven by per-resource Managers (a doc owner) who do NOT

@@ -2,6 +2,8 @@ from collections import namedtuple
 from datasette.app import Datasette
 from datasette.resources import TableResource
 from datasette_acl import update_dynamic_groups
+from datasette_acl.internal_migrations import internal_migrations
+from sqlite_utils import Database
 import pytest
 
 
@@ -296,8 +298,8 @@ async def test_manage_table_permissions(
           acl_groups.name as group_name,
           acl.actor_id,
           acl_actions.name as action_name,
-          acl_resources.database as database_name,
-          acl_resources.resource as resource_name
+          acl_resources.parent as database_name,
+          acl_resources.child as resource_name
         from acl
         left join acl_groups on acl.group_id = acl_groups.id
         join acl_actions on acl.action_id = acl_actions.id
@@ -322,8 +324,8 @@ async def test_manage_table_permissions(
           acl_groups.name as group_name,
           acl_audit.actor_id,
           acl_actions.name as action_name,
-          acl_resources.database as database_name,
-          acl_resources.resource as resource_name,
+          acl_resources.parent as database_name,
+          acl_resources.child as resource_name,
           acl_audit.operation_by,
           acl_audit.operation
         from acl_audit
@@ -496,13 +498,13 @@ async def test_table_creator_permissions():
         select
           acl.actor_id,
           acl_actions.name as action_name,
-          acl_resources.database as database_name,
-          acl_resources.resource as resource_name
+          acl_resources.parent as database_name,
+          acl_resources.child as resource_name
         from acl
         join acl_actions on acl.action_id = acl_actions.id
         join acl_resources on acl.resource_id = acl_resources.id
-        where acl_resources.database = 'db'
-        and acl_resources.resource = 'new_table'
+        where acl_resources.parent = 'db'
+        and acl_resources.child = 'new_table'
     """
             )
         )
@@ -537,6 +539,72 @@ async def test_table_creator_permissions():
         action="update-row",
         resource=TableResource("db", "new_table"),
     )
+
+
+@pytest.mark.asyncio
+async def test_fresh_acl_resources_schema():
+    # A fresh internal DB should get the new (resource_type, parent, child) schema.
+    datasette = Datasette(memory=True)
+    await datasette.invoke_startup()
+    db = datasette.get_internal_database()
+    cols = [r["name"] for r in (await db.execute("PRAGMA table_info(acl_resources)"))]
+    assert cols == ["id", "resource_type", "parent", "child"]
+
+
+@pytest.mark.asyncio
+async def test_acl_resources_migration():
+    # Drive the migrations directly: apply everything up to m002 to get the OLD
+    # (database, resource) acl_resources schema, insert rows, then run m002 and
+    # assert the data migrates to (resource_type, parent, child), backfilling
+    # resource_type='table' and preserving id/parent/child values.
+    datasette = Datasette(memory=True)
+    db = datasette.get_internal_database()
+
+    await db.execute_write_fn(
+        lambda conn: internal_migrations.apply(
+            Database(conn), stop_before="m002_generalize_acl_resources"
+        )
+    )
+
+    # m001 created acl_resources with the old (database, resource) columns
+    cols_before = [
+        r["name"] for r in (await db.execute("PRAGMA table_info(acl_resources)"))
+    ]
+    assert cols_before == ["id", "database", "resource"]
+
+    await db.execute_write(
+        "insert into acl_resources (database, resource) values (?, ?)", ["db1", "t1"]
+    )
+    await db.execute_write(
+        "insert into acl_resources (database, resource) values (?, ?)", ["db2", "t2"]
+    )
+
+    # Apply the remaining migrations (m002)
+    await db.execute_write_fn(lambda conn: internal_migrations.apply(Database(conn)))
+
+    cols_after = [
+        r["name"] for r in (await db.execute("PRAGMA table_info(acl_resources)"))
+    ]
+    assert cols_after == ["id", "resource_type", "parent", "child"]
+
+    rows = [
+        dict(r)
+        for r in (await db.execute("select * from acl_resources order by id"))
+    ]
+    assert rows == [
+        {"id": 1, "resource_type": "table", "parent": "db1", "child": "t1"},
+        {"id": 2, "resource_type": "table", "parent": "db2", "child": "t2"},
+    ]
+    # The leftover scratch table must be gone.
+    assert "acl_resources_old" not in await db.table_names()
+
+    # Re-applying is idempotent: no error, no duplicate rows.
+    await db.execute_write_fn(lambda conn: internal_migrations.apply(Database(conn)))
+    rows_again = [
+        dict(r)
+        for r in (await db.execute("select * from acl_resources order by id"))
+    ]
+    assert rows_again == rows
 
 
 @pytest.mark.asyncio

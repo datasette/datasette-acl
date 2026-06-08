@@ -300,6 +300,34 @@ async def test_generic_resource_view_unknown_type(widget_ds):
 
 
 @pytest.mark.asyncio
+async def test_generic_resource_view_nonexistent_resource_forbidden(widget_ds):
+    # issue #43: the widget type only advertises shelf/gadget (see
+    # WidgetResource.resources_sql). Editing permissions for a made-up resource
+    # id must be rejected rather than silently create + render an editing page.
+    # We return 403 (not 404) even to the global admin so the response does not
+    # leak which resource ids exist.
+    response = await widget_ds.client.get(
+        "/-/acl/resource/widget/shelf/made-up",
+        cookies={"ds_actor": widget_ds.client.actor_cookie({"id": "root"})},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_generic_resource_view_nonexistent_not_persisted(widget_ds):
+    # The rejected resource must not have leaked into acl_resources.
+    await widget_ds.client.get(
+        "/-/acl/resource/widget/shelf/made-up",
+        cookies={"ds_actor": widget_ds.client.actor_cookie({"id": "root"})},
+    )
+    internal_db = widget_ds.get_internal_database()
+    rows = await internal_db.execute(
+        "select 1 from acl_resources where resource_type = 'widget' and parent = 'shelf' and child = 'made-up'"
+    )
+    assert rows.rows == []
+
+
+@pytest.mark.asyncio
 async def test_generic_resource_view_grants_via_post(widget_ds):
     actor = {"id": "alice"}
     resource = WidgetResource("shelf", "gadget")

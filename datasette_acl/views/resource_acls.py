@@ -6,6 +6,7 @@ from datasette_acl.utils import (
     generate_changes_message,
     get_acl_valid_actors,
     resource_class_for,
+    resource_exists,
     validate_actor_id,
 )
 from datasette.utils import MultiParams
@@ -27,6 +28,14 @@ async def manage_resource_acls(request, datasette):
     # directly or via a group — so an object's owner can control its sharing
     # without instance-wide permission. Mirrors the JSON API's can_manage gate.
     if not await can_manage(datasette, request.actor, resource_type, parent, child):
+        raise Forbidden("You do not have permission to edit permissions")
+
+    # The resource must actually exist (per its resources_sql), otherwise you
+    # could edit — and, via the upsert below, conjure into existence — ACLs for
+    # a made-up id. We raise the same Forbidden as the authz gate rather than a
+    # 404 so a non-existent id is indistinguishable from one you may not manage,
+    # never leaking which ids exist (issue #43).
+    if not await resource_exists(datasette, resource_type, parent, child):
         raise Forbidden("You do not have permission to edit permissions")
 
     actions = actions_for_resource_type(datasette, resource_type)

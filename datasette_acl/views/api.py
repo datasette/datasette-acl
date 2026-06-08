@@ -49,6 +49,7 @@ from datasette_acl.utils import (
     build_resource,
     can_manage,
     resource_class_for,
+    resource_exists,
     can_edit_permissions,
     get_acl_valid_actors,
 )
@@ -238,6 +239,13 @@ async def resource_grants_json(request, datasette):
     if not actor_can_manage:
         raise Forbidden("Cannot manage sharing for this resource")
 
+    # The resource must actually exist (per its resources_sql). Same Forbidden as
+    # the manage gate so a non-existent id is indistinguishable from one you may
+    # not manage, and reading does not conjure an acl_resources row via the
+    # list_grants upsert (issue #43).
+    if not await resource_exists(datasette, resource_type, parent, child):
+        raise Forbidden("Cannot manage sharing for this resource")
+
     roles = roles_for(datasette, resource_type)
     raw_grants = await list_grants(datasette, resource_type, parent, child)
 
@@ -318,6 +326,12 @@ async def _begin_mutation(request, datasette):
         raise Forbidden(f"Unknown resource type: {resource_type}")
     # Per-resource authorization — the correctness fix over a global flag.
     await _ensure_can_manage(datasette, request, resource_type, parent, child)
+    # The resource must actually exist (per its resources_sql), otherwise a grant
+    # would conjure a row for a made-up id. Same Forbidden as the authz gate so a
+    # non-existent id is indistinguishable from one you may not manage, never
+    # leaking which ids exist (issue #43).
+    if not await resource_exists(datasette, resource_type, parent, child):
+        raise Forbidden("Cannot manage sharing for this resource")
     try:
         body = _parse_json_body(await request.post_body())
     except ValueError as exc:

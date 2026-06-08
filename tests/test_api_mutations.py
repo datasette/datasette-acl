@@ -376,6 +376,25 @@ async def test_unknown_resource_type(api_ds):
     assert response.status_code == 403
 
 
+@pytest.mark.asyncio
+async def test_grant_nonexistent_resource_forbidden(api_ds):
+    # issue #43: mock-doc only advertises parent "42" (DocResource.resources_sql).
+    # Granting on a made-up parent must be rejected -- even for the global admin,
+    # with the same 403 as an unauthorized resource so existence is not leaked --
+    # and must not conjure an acl_resources row.
+    response = await _post(
+        api_ds,
+        "/-/acl/api/resource/mock-doc/made-up/grant",
+        json={"actor_id": "bob", "role": "Viewer"},
+        cookies=_root_cookie(api_ds),
+    )
+    assert response.status_code == 403
+    rows = await api_ds.get_internal_database().execute(
+        "select 1 from acl_resources where resource_type = 'mock-doc' and parent = 'made-up'"
+    )
+    assert rows.rows == []
+
+
 # --- bad input ------------------------------------------------------------
 
 

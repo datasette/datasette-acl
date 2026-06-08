@@ -147,6 +147,22 @@ async def test_read_unknown_resource_type(api_ds):
 
 
 @pytest.mark.asyncio
+async def test_read_nonexistent_resource_forbidden(api_ds):
+    # issue #43: mock-doc only advertises parent "42" (DocResource.resources_sql).
+    # Reading grants for a made-up parent must 403 (same as an unauthorized
+    # resource, so existence is not leaked) and must not conjure an
+    # acl_resources row via the list_grants upsert.
+    response = await _get(
+        api_ds, "/-/acl/api/resource/mock-doc/made-up", cookies=_root_cookie(api_ds)
+    )
+    assert response.status_code == 403
+    rows = await api_ds.get_internal_database().execute(
+        "select 1 from acl_resources where resource_type = 'mock-doc' and parent = 'made-up'"
+    )
+    assert rows.rows == []
+
+
+@pytest.mark.asyncio
 async def test_per_resource_manager_can_read(api_ds):
     # Grant alice the Manager role (which includes the manage action) and prove
     # she can read the endpoint without the global datasette-acl permission.

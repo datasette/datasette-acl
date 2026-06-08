@@ -83,6 +83,34 @@ def actions_for_resource_type(
     ]
 
 
+async def resource_exists(
+    datasette: Datasette,
+    resource_type: str,
+    parent: str,
+    child: Optional[str] = None,
+) -> bool:
+    """Whether ``(parent, child)`` is a real resource of ``resource_type``.
+
+    Existence is defined by the resource type's ``resources_sql`` classmethod --
+    the same query core uses to enumerate resources. We run it with
+    ``actor=None`` (the full universe, independent of who is asking) and test for
+    membership, so editing permissions for a made-up id 404s instead of silently
+    creating it (issue #43). ``IS`` is NULL-safe, so a parent-only resource
+    (``child`` NULL) matches correctly.
+
+    Returns False for unknown resource types.
+    """
+    rc = resource_class_for(datasette, resource_type)
+    if rc is None:
+        return False
+    inner = await rc.resources_sql(datasette, actor=None)
+    result = await datasette.get_internal_database().execute(
+        f"SELECT 1 FROM ({inner}) WHERE parent IS :parent AND child IS :child LIMIT 1",
+        {"parent": parent, "child": child},
+    )
+    return bool(result.rows)
+
+
 def build_resource(
     datasette: Datasette,
     resource_type: str,

@@ -58,7 +58,7 @@ async def widget_ds():
         yield datasette
         internal_db = datasette.get_internal_database()
         for table in await internal_db.table_names():
-            if table.startswith("acl"):
+            if table.startswith("acl") or table == "_sqlite_migrations":
                 await internal_db.execute_write(f"drop table {table}")
         await db.execute_write("drop table t")
     finally:
@@ -66,20 +66,34 @@ async def widget_ds():
 
 
 async def _upsert_resource_id(db, resource_type, parent, child):
-    # A plain INSERT OR IGNORE ... RETURNING yields no row when the resource
-    # already exists, so use a no-op upsert to always get the id back.
-    return await db.execute_write_fn(
-        lambda conn: conn.execute(
+    # Avoid RETURNING so these tests work against older SQLite versions.
+    def get_or_create_resource_id(conn):
+        params = [resource_type, parent, child]
+        row = conn.execute(
             """
-            INSERT INTO acl_resources (resource_type, parent, child)
-            VALUES (?, ?, ?)
-            ON CONFLICT(resource_type, parent, child)
-                DO UPDATE SET resource_type = excluded.resource_type
-            RETURNING id
+            SELECT id FROM acl_resources
+            WHERE resource_type = ? AND parent = ? AND child IS ?
             """,
-            [resource_type, parent, child],
-        ).fetchone()[0]
-    )
+            params,
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                """
+                INSERT INTO acl_resources (resource_type, parent, child)
+                VALUES (?, ?, ?)
+                """,
+                params,
+            )
+            row = conn.execute(
+                """
+                SELECT id FROM acl_resources
+                WHERE resource_type = ? AND parent = ? AND child IS ?
+                """,
+                params,
+            ).fetchone()
+        return row[0]
+
+    return await db.execute_write_fn(get_or_create_resource_id)
 
 
 async def _grant_actor(datasette, *, actor_id, resource_type, parent, child, action):
@@ -101,16 +115,19 @@ async def _grant_actor(datasette, *, actor_id, resource_type, parent, child, act
 
 async def _grant_group(datasette, *, group_name, resource_type, parent, child, action):
     db = datasette.get_internal_database()
-    group_id = await db.execute_write_fn(
-        lambda conn: conn.execute(
-            """
-            INSERT INTO acl_groups (name) VALUES (?)
-            ON CONFLICT(name) DO UPDATE SET name = excluded.name
-            RETURNING id
-            """,
-            [group_name],
-        ).fetchone()[0]
-    )
+
+    def get_or_create_group_id(conn):
+        row = conn.execute(
+            "SELECT id FROM acl_groups WHERE name = ?", [group_name]
+        ).fetchone()
+        if row is None:
+            conn.execute("INSERT INTO acl_groups (name) VALUES (?)", [group_name])
+            row = conn.execute(
+                "SELECT id FROM acl_groups WHERE name = ?", [group_name]
+            ).fetchone()
+        return row[0]
+
+    group_id = await db.execute_write_fn(get_or_create_group_id)
     resource_id = await _upsert_resource_id(db, resource_type, parent, child)
     await db.execute_write(
         """

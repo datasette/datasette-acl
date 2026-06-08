@@ -34,7 +34,7 @@ async def ds():
     await db.execute_write("drop table t")
     internal_db = datasette.get_internal_database()
     for table in await internal_db.table_names():
-        if table.startswith("acl"):
+        if table.startswith("acl") or table == "_sqlite_migrations":
             await internal_db.execute_write(f"drop table {table}")
     for table in await db.table_names():
         await db.execute_write(f"drop table {table}")

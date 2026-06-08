@@ -544,9 +544,10 @@ async def test_table_creator_permissions():
 @pytest.mark.asyncio
 async def test_fresh_acl_resources_schema():
     # A fresh internal DB should get the new (resource_type, parent, child) schema.
-    datasette = Datasette(memory=True)
+    datasette = Datasette()
     await datasette.invoke_startup()
     db = datasette.get_internal_database()
+    assert "acl_resources" in await db.table_names()
     cols = [r["name"] for r in (await db.execute("PRAGMA table_info(acl_resources)"))]
     assert cols == ["id", "resource_type", "parent", "child"]
 

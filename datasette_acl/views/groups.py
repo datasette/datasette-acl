@@ -12,17 +12,21 @@ select
     acl_groups.id,
     acl_groups.name,
     acl_groups.deleted,
-    count(acl_actor_groups.actor_id) as size,
-    json_group_array(
-        acl_actor_groups.actor_id
-    ) filter (
-        where
-        acl_actor_groups.actor_id is not null
+    (
+        select count(*)
+        from acl_actor_groups
+        where acl_actor_groups.group_id = acl_groups.id
+    ) as size,
+    coalesce(
+        (
+            select json_group_array(actor_id)
+            from acl_actor_groups
+            where acl_actor_groups.group_id = acl_groups.id
+        ),
+        '[]'
     ) as actor_ids
 from
     acl_groups
-left join
-    acl_actor_groups on acl_groups.id = acl_actor_groups.group_id
 {extra_where}
 group by
     acl_groups.id, acl_groups.name

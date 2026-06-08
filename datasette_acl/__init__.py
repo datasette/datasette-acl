@@ -302,21 +302,35 @@ def track_event(datasette, event):
             return
         # Add ACLs for the user who created the table
         db = datasette.get_internal_database()
-        # Ensure resource exists for table and grab its id. A plain INSERT OR
-        # IGNORE ... RETURNING gives nothing back when the row already exists,
-        # so use a no-op upsert to always return the id, new or existing.
-        resource_id = await db.execute_write_fn(
-            lambda conn: conn.execute(
+        # Ensure resource exists for table and grab its id. Avoid RETURNING so
+        # this works with older SQLite versions.
+        def get_or_create_resource_id(conn):
+            params = ["table", event.database, event.table]
+            row = conn.execute(
                 """
-                INSERT INTO acl_resources (resource_type, parent, child)
-                VALUES ('table', ?, ?)
-                ON CONFLICT(resource_type, parent, child)
-                    DO UPDATE SET resource_type = excluded.resource_type
-                RETURNING id
+                SELECT id FROM acl_resources
+                WHERE resource_type = ? AND parent = ? AND child IS ?
                 """,
-                [event.database, event.table],
-            ).fetchone()[0]
-        )
+                params,
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO acl_resources (resource_type, parent, child)
+                    VALUES (?, ?, ?)
+                    """,
+                    params,
+                )
+                row = conn.execute(
+                    """
+                    SELECT id FROM acl_resources
+                    WHERE resource_type = ? AND parent = ? AND child IS ?
+                    """,
+                    params,
+                ).fetchone()
+            return row[0]
+
+        resource_id = await db.execute_write_fn(get_or_create_resource_id)
         await db.execute_write_many(
             """
             INSERT INTO acl (actor_id, group_id, resource_id, action_id)

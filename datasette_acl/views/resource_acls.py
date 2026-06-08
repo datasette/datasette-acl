@@ -1,47 +1,51 @@
 from datasette import Response, Forbidden
-from datasette.utils import MultiParams
 from datasette_acl.utils import (
     actions_for_resource_type,
     can_edit_permissions,
     generate_changes_message,
     get_acl_valid_actors,
+    resource_class_for,
     validate_actor_id,
 )
+from datasette.utils import MultiParams
 from urllib.parse import parse_qs
 
 
-def table_actions_list(datasette):
-    """Action names scoped to the 'table' resource type.
-
-    Discovered dynamically from datasette.actions rather than hardcoded, so any
-    plugin that registers table-scoped actions is managed here automatically.
-    """
-    return actions_for_resource_type(datasette, "table")
-
-
-async def manage_table_acls(request, datasette):
+async def manage_resource_acls(request, datasette):
+    # Admin page: gated on the global datasette-acl permission. Per-resource
+    # authorization (who may manage a specific resource) arrives with the JSON
+    # API in phase-02.
     if not await can_edit_permissions(datasette, request.actor):
         raise Forbidden("You do not have permission to edit permissions")
-    table = request.url_vars["table"]
-    database = request.url_vars["database"]
-    actions = table_actions_list(datasette)
+
+    resource_type = request.url_vars["resource_type"]
+    parent = request.url_vars["parent"]
+    child = request.url_vars.get("child")
+
+    # The resource type must correspond to a known, action-bearing resource
+    # class, otherwise there is nothing to manage.
+    if resource_class_for(datasette, resource_type) is None:
+        raise Forbidden(f"Unknown resource type: {resource_type}")
+
+    actions = actions_for_resource_type(datasette, resource_type)
+
     internal_db = datasette.get_internal_database()
     groups = [
         g["name"]
-        for g in await datasette.get_internal_database().execute(
+        for g in await internal_db.execute(
             "select name from acl_groups where deleted is null"
         )
     ]
 
-    # Ensure we have a resource_id for this table
+    # Ensure we have a resource_id for this resource
     await internal_db.execute_write(
-        "INSERT OR IGNORE INTO acl_resources (resource_type, parent, child) VALUES ('table', ?, ?);",
-        [database, table],
+        "INSERT OR IGNORE INTO acl_resources (resource_type, parent, child) VALUES (?, ?, ?);",
+        [resource_type, parent, child],
     )
     resource_id = (
         await internal_db.execute(
-            "SELECT id FROM acl_resources WHERE resource_type = 'table' AND parent = ? AND child = ?",
-            [database, table],
+            "SELECT id FROM acl_resources WHERE resource_type = ? AND parent = ? AND child IS ?",
+            [resource_type, parent, child],
         )
     ).single_value()
 
@@ -66,7 +70,6 @@ async def manage_table_acls(request, datasette):
         action_name = row["action_name"]
         if group_name:
             current_group_permissions.setdefault(group_name, {})[action_name] = True
-            current_group_permissions[group_name][action_name] = True
         else:
             assert actor_id
             current_user_permissions.setdefault(actor_id, {})[action_name] = True
@@ -88,7 +91,6 @@ async def manage_table_acls(request, datasette):
                 )
                 if new_value != current_value:
                     if new_value:
-                        # They added it, add the record
                         await internal_db.execute_write(
                             """
                             INSERT INTO acl (actor_id, group_id, resource_id, action_id)
@@ -108,11 +110,10 @@ async def manage_table_acls(request, datasette):
                         operation = "added"
                         group_changes_made["added"].append((group_name, action_name))
                     else:
-                        # They removed it
                         await internal_db.execute_write(
                             """
                             delete from acl where
-                                actor_id is null and 
+                                actor_id is null and
                                 group_id = (SELECT id FROM acl_groups WHERE name = :group_name)
                                 and resource_id = :resource_id
                                 and action_id = (SELECT id FROM acl_actions WHERE name = :action_name)
@@ -154,7 +155,6 @@ async def manage_table_acls(request, datasette):
         user_changes_made = {"added": [], "removed": []}
         for actor_id in list(current_user_permissions) + [None]:
             if actor_id is None:
-                # This is the special case for new_user_{{ action }}
                 actor_id = (post_vars.get("new_actor_id") or "").strip()
                 if not actor_id:
                     continue
@@ -176,7 +176,6 @@ async def manage_table_acls(request, datasette):
                 )
                 if new_value != current_value:
                     if new_value:
-                        # They added the permission
                         await internal_db.execute_write(
                             """
                             insert into acl (actor_id, group_id, resource_id, action_id)
@@ -196,7 +195,6 @@ async def manage_table_acls(request, datasette):
                         operation = "added"
                         user_changes_made["added"].append((actor_id, action_name))
                     else:
-                        # They removed the permission
                         await internal_db.execute_write(
                             """
                             delete from acl where
@@ -269,7 +267,6 @@ async def manage_table_acls(request, datasette):
         [resource_id],
     )
 
-    # group_sizes dictionary for displaying their sizes
     group_sizes = {
         row["name"]: row["size"]
         for row in await internal_db.execute(
@@ -291,10 +288,11 @@ async def manage_table_acls(request, datasette):
 
     return Response.html(
         await datasette.render_template(
-            "manage_table_acls.html",
+            "manage_resource_acls.html",
             {
-                "database_name": request.url_vars["database"],
-                "table_name": request.url_vars["table"],
+                "resource_type": resource_type,
+                "parent": parent,
+                "child": child,
                 "actions": actions,
                 "groups": groups,
                 "group_sizes": group_sizes,

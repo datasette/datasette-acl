@@ -27,7 +27,7 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from datasette_acl.roles import AclRole, actions_for_role
+from datasette_acl.roles import actions_for_role, roles_for
 
 if TYPE_CHECKING:
     from datasette.app import Datasette
@@ -44,11 +44,6 @@ class Grant(TypedDict):
     actions: List[str]
 
 
-def _roles_for(datasette: Datasette, resource_type: str) -> List[AclRole]:
-    registry = getattr(datasette, "_acl_roles_registry", None) or {}
-    return registry.get(resource_type, [])
-
-
 def _resolve_actions(
     datasette: Datasette,
     resource_type: str,
@@ -63,7 +58,7 @@ def _resolve_actions(
     if (role is None) == (actions is None):
         raise ValueError("Provide exactly one of role= or actions=")
     if role is not None:
-        resolved = actions_for_role(_roles_for(datasette, resource_type), role)
+        resolved = actions_for_role(roles_for(datasette, resource_type), role)
         if resolved is None:
             raise ValueError(
                 f"Unknown role {role!r} for resource type {resource_type!r}"

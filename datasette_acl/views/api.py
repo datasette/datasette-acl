@@ -44,7 +44,7 @@ import json
 from datasette import Response, Forbidden
 
 from datasette_acl.grants import grant, revoke, update_role, list_grants
-from datasette_acl.roles import role_for_actions, manage_only_actions
+from datasette_acl.roles import role_for_actions, manage_only_actions, roles_for
 from datasette_acl.utils import (
     build_resource,
     resource_class_for,
@@ -56,11 +56,6 @@ from datasette_acl.utils import (
 # acl rows but represent classes of actor rather than a specific person, so the
 # UI renders them in a separate "General access" section.
 PUBLIC_PRINCIPALS = {"*", "_signed_in", "_anonymous"}
-
-
-def _roles_for(datasette, resource_type):
-    registry = getattr(datasette, "_acl_roles_registry", None) or {}
-    return registry.get(resource_type, [])
 
 
 def _roles_payload(roles):
@@ -103,7 +98,7 @@ async def can_manage(datasette, actor, resource_type, parent, child=None):
     """
     if await can_edit_permissions(datasette, actor):
         return True
-    manage = manage_only_actions(_roles_for(datasette, resource_type))
+    manage = manage_only_actions(roles_for(datasette, resource_type))
     if not manage:
         # No manage role for this type: fall back to global admin (already
         # checked above and was False), so non-admins cannot manage.
@@ -168,17 +163,13 @@ async def _group_info(datasette, group_ids):
     }
 
 
-async def _actor_grant_entry(datasette, roles, actor_id, actions):
-    """Build the enriched API entry for one actor-principal grant.
+def _actor_entry(actor_id, role, actions, info):
+    """Assemble an actor grant entry from an already-resolved role + actor info.
 
-    Resolves the granted action-set to its best role, enriches via core
-    ``actors_from_ids`` (skipped for wildcard principals), and tags ``kind``.
+    Pure shape-builder shared by the batched GET loop and the per-principal
+    mutation helper, so both produce the identical entry shape. ``info`` is the
+    actor's ``actors_from_ids`` record (``{}`` for wildcard / unknown actors).
     """
-    role = role_for_actions(roles, set(actions))
-    enriched = {}
-    if actor_id not in PUBLIC_PRINCIPALS:
-        enriched = (await datasette.actors_from_ids([actor_id])) or {}
-    info = enriched.get(actor_id) or {}
     entry = {
         "principal": "actor",
         "id": actor_id,
@@ -192,19 +183,43 @@ async def _actor_grant_entry(datasette, roles, actor_id, actions):
     return entry
 
 
-async def _group_grant_entry(datasette, roles, group_id, actions):
-    """Build the enriched API entry for one group-principal grant."""
-    role = role_for_actions(roles, set(actions))
-    info = (await _group_info(datasette, [group_id])).get(group_id, {})
+def _group_entry(group_id, role, actions, info, fallback_name=None):
+    """Assemble a group grant entry from an already-resolved role + group info.
+
+    Pure shape-builder shared by the batched GET loop and the per-principal
+    mutation helper. ``info`` is a ``_group_info`` record; ``fallback_name`` is
+    used for the display name when ``info`` carries none (the GET passes the
+    name from ``list_grants``; mutation responses have no fallback).
+    """
     return {
         "principal": "group",
         "id": str(group_id),
         "role": role.name if role else None,
         "actions": sorted(actions),
         "kind": "group",
-        "display_name": info.get("name"),
+        "display_name": info.get("name") or fallback_name,
         "member_count": info.get("member_count", 0),
     }
+
+
+async def _actor_grant_entry(datasette, roles, actor_id, actions):
+    """Build the enriched API entry for one actor-principal grant.
+
+    Resolves the granted action-set to its best role, enriches via core
+    ``actors_from_ids`` (skipped for wildcard principals), and tags ``kind``.
+    """
+    role = role_for_actions(roles, set(actions))
+    enriched = {}
+    if actor_id not in PUBLIC_PRINCIPALS:
+        enriched = (await datasette.actors_from_ids([actor_id])) or {}
+    return _actor_entry(actor_id, role, actions, enriched.get(actor_id) or {})
+
+
+async def _group_grant_entry(datasette, roles, group_id, actions):
+    """Build the enriched API entry for one group-principal grant."""
+    role = role_for_actions(roles, set(actions))
+    info = (await _group_info(datasette, [group_id])).get(group_id, {})
+    return _group_entry(group_id, role, actions, info)
 
 
 def _principal_from_body(body):
@@ -260,7 +275,7 @@ async def resource_grants_json(request, datasette):
     if not actor_can_manage:
         raise Forbidden("Cannot manage sharing for this resource")
 
-    roles = _roles_for(datasette, resource_type)
+    roles = roles_for(datasette, resource_type)
     raw_grants = await list_grants(datasette, resource_type, parent, child)
 
     # Enrich actor grants in one batch via core actors_from_ids. Wildcard
@@ -282,30 +297,19 @@ async def resource_grants_json(request, datasette):
         role = role_for_actions(roles, set(g["actions"]))
         if g["principal"] == "actor":
             actor_id = g["actor_id"]
-            entry = {
-                "principal": "actor",
-                "id": actor_id,
-                "role": role.name if role else None,
-                "actions": g["actions"],
-                "kind": _kind_for(actor_id, enriched.get(actor_id)),
-            }
-            info = enriched.get(actor_id) or {}
-            for key in ("display_name", "email", "avatar_url"):
-                if info.get(key):
-                    entry[key] = info[key]
-            grants.append(entry)
+            grants.append(
+                _actor_entry(actor_id, role, g["actions"], enriched.get(actor_id) or {})
+            )
         else:
             info = group_info.get(g["group_id"], {})
             grants.append(
-                {
-                    "principal": "group",
-                    "id": str(g["group_id"]),
-                    "role": role.name if role else None,
-                    "actions": g["actions"],
-                    "kind": "group",
-                    "display_name": info.get("name", g["group_name"]),
-                    "member_count": info.get("member_count", 0),
-                }
+                _group_entry(
+                    g["group_id"],
+                    role,
+                    g["actions"],
+                    info,
+                    fallback_name=g["group_name"],
+                )
             )
 
     return Response.json(
@@ -355,7 +359,7 @@ async def _begin_mutation(request, datasette):
         body = _parse_json_body(await request.post_body())
     except ValueError as exc:
         raise _ApiError(400, str(exc))
-    roles = _roles_for(datasette, resource_type)
+    roles = roles_for(datasette, resource_type)
     return resource_type, parent, child, roles, body
 
 

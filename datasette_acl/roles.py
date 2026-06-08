@@ -7,11 +7,16 @@ keyed by ``resource_type``. Helpers resolve a granted action-set to its
 best-matching role and back.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
 from datasette.plugins import pm
 from datasette.utils import await_me_maybe
+
+if TYPE_CHECKING:
+    from datasette.app import Datasette
 
 
 @dataclass
@@ -53,6 +58,18 @@ async def build_roles_registry(datasette) -> Dict[str, List[AclRole]]:
     for resource_type in registry:
         registry[resource_type].sort(key=lambda r: r.rank)
     return registry
+
+
+def roles_for(datasette: Datasette, resource_type: str) -> List[AclRole]:
+    """Return the registered roles for ``resource_type`` (``[]`` if none).
+
+    Reads the registry cached on the Datasette instance at startup by
+    :func:`build_roles_registry` (see ``datasette_acl.startup``). Shared by the
+    grants layer and the JSON API so neither pokes ``_acl_roles_registry``
+    directly.
+    """
+    registry = getattr(datasette, "_acl_roles_registry", None) or {}
+    return registry.get(resource_type, [])
 
 
 def role_for_actions(

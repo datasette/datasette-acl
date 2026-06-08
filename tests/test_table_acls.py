@@ -242,7 +242,6 @@ ManageTableTest = namedtuple(
 )
 async def test_manage_table_permissions(
     ds,
-    csrftoken,
     description,
     setup_post_data,
     post_data,
@@ -262,10 +261,9 @@ async def test_manage_table_permissions(
     if setup_post_data:
         setup_response = await ds.client.post(
             "/db/t/-/acl",
-            data={**setup_post_data, "csrftoken": csrftoken},
+            data={**setup_post_data},
             cookies={
                 "ds_actor": ds.client.actor_cookie({"id": "root"}),
-                "ds_csrftoken": csrftoken,
             },
         )
         assert setup_response.status_code == 302
@@ -281,10 +279,9 @@ async def test_manage_table_permissions(
     # Use the /db/table/-/acl page to update permissions
     response = await ds.client.post(
         "/db/t/-/acl",
-        data={**post_data, "csrftoken": csrftoken},
+        data={**post_data},
         cookies={
             "ds_actor": ds.client.actor_cookie({"id": "root"}),
-            "ds_csrftoken": csrftoken,
         },
     )
     assert response.status_code == 302
@@ -553,8 +550,13 @@ async def test_table_actions(ds, should_work):
             ),
         },
     )
-    fragment = '<a href="/db/t/-/acl">Manage table permissions'
+    # 1.0a30 renders menu links with extra attrs (role/tabindex), so match the
+    # href + label rather than an exact anchor tag.
+    has_link = (
+        'href="/db/t/-/acl"' in response.text
+        and "Manage table permissions" in response.text
+    )
     if should_work:
-        assert fragment in response.text
+        assert has_link
     else:
-        assert fragment not in response.text
+        assert not has_link

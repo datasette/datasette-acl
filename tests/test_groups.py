@@ -40,7 +40,6 @@ ManageGroupTest = namedtuple(
 )
 async def test_manage_group_membership(
     ds,
-    csrftoken,
     description,
     setup_post_data,
     post_data,
@@ -52,20 +51,18 @@ async def test_manage_group_membership(
     if setup_post_data:
         setup_response = await ds.client.post(
             "/-/acl/groups/dev",
-            data={**setup_post_data, "csrftoken": csrftoken},
+            data={**setup_post_data},
             cookies={
                 "ds_actor": ds.client.actor_cookie({"id": "root"}),
-                "ds_csrftoken": csrftoken,
             },
         )
         assert setup_response.status_code == 302
 
     response = await ds.client.post(
         "/-/acl/groups/dev",
-        data={**post_data, "csrftoken": csrftoken},
+        data={**post_data},
         cookies={
             "ds_actor": ds.client.actor_cookie({"id": "root"}),
-            "ds_csrftoken": csrftoken,
         },
     )
     assert response.status_code == 302
@@ -87,17 +84,16 @@ async def test_manage_group_membership(
 
 
 @pytest.mark.asyncio
-async def test_cannot_edit_dynamic_group(ds, csrftoken):
+async def test_cannot_edit_dynamic_group(ds):
     db = ds.get_internal_database()
 
     # Adding to dev should work, adding to staff should fail
     for group in ("staff", "dev"):
         await ds.client.post(
             f"/-/acl/groups/{group}",
-            data={"add": "tony2", "csrftoken": csrftoken},
+            data={"add": "tony2"},
             cookies={
                 "ds_actor": ds.client.actor_cookie({"id": "root"}),
-                "ds_csrftoken": csrftoken,
             },
         )
     assert await get_group_members(db, "staff") == set()
@@ -147,16 +143,15 @@ async def test_deleted_group(ds):
 
 
 @pytest.mark.asyncio
-async def test_create_delete_group(ds, csrftoken):
+async def test_create_delete_group(ds):
     internal_db = ds.get_internal_database()
 
     # Create a group
     create_group_response = await ds.client.post(
         "/-/acl/groups",
-        data={"new_group": "sales", "csrftoken": csrftoken},
+        data={"new_group": "sales"},
         cookies={
             "ds_actor": ds.client.actor_cookie({"id": "root"}),
-            "ds_csrftoken": csrftoken,
         },
     )
     assert create_group_response.status_code == 302
@@ -182,10 +177,9 @@ async def test_create_delete_group(ds, csrftoken):
     for actor_id in ("sally", "sam", "paulo"):
         add_response = await ds.client.post(
             f"/-/acl/groups/sales",
-            data={"add": actor_id, "csrftoken": csrftoken},
+            data={"add": actor_id},
             cookies={
                 "ds_actor": ds.client.actor_cookie({"id": "root"}),
-                "ds_csrftoken": csrftoken,
             },
         )
         assert add_response.status_code == 302
@@ -198,7 +192,6 @@ async def test_create_delete_group(ds, csrftoken):
         f"/db/t/-/acl",
         cookies={
             "ds_actor": ds.client.actor_cookie({"id": "root"}),
-            "ds_csrftoken": csrftoken,
         },
     )
     assert "/groups/sales" in table_page1.text
@@ -206,20 +199,18 @@ async def test_create_delete_group(ds, csrftoken):
     # Add permissions for that group on that page, to test audit log later
     await ds.client.post(
         "/db/t/-/acl",
-        data={"group_permissions_sales": "insert-row", "csrftoken": csrftoken},
+        data={"group_permissions_sales": "insert-row"},
         cookies={
             "ds_actor": ds.client.actor_cookie({"id": "root"}),
-            "ds_csrftoken": csrftoken,
         },
     )
 
     # Deleting this group should first remove the members
     delete_group_response = await ds.client.post(
         "/-/acl/groups/sales",
-        data={"delete_group": "1", "csrftoken": csrftoken},
+        data={"delete_group": "1"},
         cookies={
             "ds_actor": ds.client.actor_cookie({"id": "root"}),
-            "ds_csrftoken": csrftoken,
         },
     )
     assert delete_group_response.status_code == 302
@@ -237,7 +228,6 @@ async def test_create_delete_group(ds, csrftoken):
         f"/db/t/-/acl",
         cookies={
             "ds_actor": ds.client.actor_cookie({"id": "root"}),
-            "ds_csrftoken": csrftoken,
         },
     )
     assert "/groups/sales" not in table_page2.text

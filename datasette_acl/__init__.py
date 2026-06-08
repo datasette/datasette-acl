@@ -302,17 +302,21 @@ def track_event(datasette, event):
             return
         # Add ACLs for the user who created the table
         db = datasette.get_internal_database()
-        # Ensure resource exists for table
-        await db.execute_write(
-            "INSERT OR IGNORE INTO acl_resources (resource_type, parent, child) VALUES ('table', ?, ?);",
-            [event.database, event.table],
-        )
-        resource_id = (
-            await db.execute(
-                "SELECT id FROM acl_resources WHERE resource_type = 'table' AND parent = ? AND child = ?",
+        # Ensure resource exists for table and grab its id. A plain INSERT OR
+        # IGNORE ... RETURNING gives nothing back when the row already exists,
+        # so use a no-op upsert to always return the id, new or existing.
+        resource_id = await db.execute_write_fn(
+            lambda conn: conn.execute(
+                """
+                INSERT INTO acl_resources (resource_type, parent, child)
+                VALUES ('table', ?, ?)
+                ON CONFLICT(resource_type, parent, child)
+                    DO UPDATE SET resource_type = excluded.resource_type
+                RETURNING id
+                """,
                 [event.database, event.table],
-            )
-        ).single_value()
+            ).fetchone()[0]
+        )
         await db.execute_write_many(
             """
             INSERT INTO acl (actor_id, group_id, resource_id, action_id)

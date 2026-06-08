@@ -7,80 +7,14 @@ from datasette.plugins import pm
 from datasette_acl.utils import can_edit_permissions
 from datasette_acl.views.table_acls import manage_table_acls
 from datasette_acl.views.groups import manage_groups, manage_group
+from datasette_acl.internal_migrations import internal_migrations
+from sqlite_utils import Database
 from . import hookspecs
 import json
 import sys
 import time
 
 pm.add_hookspecs(hookspecs)
-
-CREATE_TABLES_SQL = """
-create table if not exists acl_resources (
-    id integer primary key,
-    database text not null,
-    resource text,
-    unique(database, resource)
-);
-
-create table if not exists acl_actions (
-    id integer primary key,
-    name text not null unique
-);
-
--- new table for groups
-create table if not exists acl_groups (
-    id integer primary key,
-    name text not null unique,
-    deleted integer
-);
-
--- new table for actor-group relationships
-create table if not exists acl_actor_groups (
-    actor_id text,
-    group_id integer,
-    primary key (actor_id, group_id),
-    foreign key (group_id) references acl_groups(id)
-);
-
--- Group membership audit log
-create table if not exists acl_groups_audit (
-    id integer primary key,
-    timestamp text default (datetime('now')),
-    operation_by text,
-    operation text check (operation in ('added', 'removed', 'created', 'deleted')),
-    group_id integer,
-    actor_id text,
-    foreign key (group_id) references acl_groups(id)
-);
-
-create table if not exists acl (
-    acl_id integer primary key,
-    actor_id text,
-    group_id integer,
-    resource_id integer,
-    action_id integer,
-    foreign key (group_id) references acl_groups(id),
-    foreign key (resource_id) references acl_resources(id),
-    foreign key (action_id) references acl_actions(id),
-    check ((actor_id is null) != (group_id is null)),
-    unique(actor_id, group_id, resource_id, action_id)
-);
-
--- ACL audit log
-create table if not exists acl_audit (
-    id integer primary key,
-    timestamp text default (datetime('now')),
-    operation_by text,
-    operation text check (operation in ('added', 'removed')),
-    action_id integer,
-    resource_id integer,
-    group_id integer,
-    actor_id text,
-    foreign key (group_id) references acl_groups(id),
-    foreign key (resource_id) references acl_resources(id),
-    foreign key (action_id) references acl_actions(id)
-)
-"""
 
 EXPECTED_GROUPS_SQL = """
 with expected_groups as (
@@ -121,7 +55,11 @@ from actual_groups
 def startup(datasette):
     async def inner():
         db = datasette.get_internal_database()
-        await db.execute_write_script(CREATE_TABLES_SQL)
+
+        def apply_migrations(connection):
+            internal_migrations.apply(Database(connection))
+
+        await db.execute_write_fn(apply_migrations)
         # Ensure permissions are in the DB
         await db.execute_write_many(
             """

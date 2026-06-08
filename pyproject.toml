@@ -10,7 +10,8 @@ classifiers=[
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "datasette>=1.0a20"
+    "datasette>=1.0a20",
+    "sqlite-migrate==0.1b0"
 ]
 
 [dependency-groups]

@@ -13,6 +13,48 @@ async def can_edit_permissions(datasette, actor):
     return await datasette.allowed(actor=actor, action="datasette-acl")
 
 
+async def can_manage(datasette, actor, resource_type, parent, child=None):
+    """Whether ``actor`` may manage sharing for this resource.
+
+    The authoritative per-resource manage check. An actor can manage if EITHER:
+
+      * they are ``datasette.allowed`` one of the resource type's *manage-only*
+        actions on this specific resource — i.e. they hold a ``manage=True``
+        role grant (Manager/Owner), which flows through the same acl machinery
+        and so composes with groups; OR
+      * the resource type registers no ``manage`` role, in which case we fall
+        back to the global ``datasette-acl`` permission so table-style resources
+        (which only have raw actions, no roles) still work.
+
+    The manage check authorizes against :func:`manage_only_actions` (the action
+    exclusive to manage roles, e.g. ``paper-manage``) rather than the full
+    Manager action bundle — otherwise any Viewer/Editor, who also holds
+    ``*-view``, would pass. The global ``datasette-acl`` admin always wins.
+
+    Returns False (rather than raising) for unknown resource types.
+    """
+    # Imported lazily to avoid a module-load cycle (roles imports nothing from
+    # utils, but keeping the import local mirrors the prior api.py home and
+    # documents the dependency direction).
+    from datasette_acl.roles import manage_only_actions, roles_for
+
+    if await can_edit_permissions(datasette, actor):
+        return True
+    manage = manage_only_actions(roles_for(datasette, resource_type))
+    if not manage:
+        # No manage role for this type: fall back to global admin (already
+        # checked above and was False), so non-admins cannot manage.
+        return False
+    try:
+        resource = build_resource(datasette, resource_type, parent, child)
+    except ValueError:
+        return False
+    for action in manage:
+        if await datasette.allowed(action=action, resource=resource, actor=actor):
+            return True
+    return False
+
+
 def resource_class_for(
     datasette: Datasette, resource_type: str
 ) -> Optional[Type[Resource]]:

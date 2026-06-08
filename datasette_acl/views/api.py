@@ -44,9 +44,10 @@ import json
 from datasette import Response, Forbidden
 
 from datasette_acl.grants import grant, revoke, update_role, list_grants
-from datasette_acl.roles import role_for_actions, manage_only_actions, roles_for
+from datasette_acl.roles import role_for_actions, roles_for
 from datasette_acl.utils import (
     build_resource,
+    can_manage,
     resource_class_for,
     can_edit_permissions,
     get_acl_valid_actors,
@@ -73,44 +74,6 @@ def _roles_payload(roles):
             entry["description"] = role.description
         payload.append(entry)
     return payload
-
-
-async def can_manage(datasette, actor, resource_type, parent, child=None):
-    """Whether ``actor`` may manage sharing for this resource.
-
-    The authoritative per-resource manage check (task 04). An actor can manage
-    if EITHER:
-
-      * they are ``datasette.allowed`` one of the resource type's *manage-only*
-        actions on this specific resource — i.e. they hold a ``manage=True``
-        role grant (Manager/Owner), which flows through the same acl machinery
-        and so composes with groups; OR
-      * the resource type registers no ``manage`` role, in which case we fall
-        back to the global ``datasette-acl`` permission so table-style resources
-        (which only have raw actions, no roles) still work.
-
-    The manage check authorizes against :func:`manage_only_actions` (the action
-    exclusive to manage roles, e.g. ``paper-manage``) rather than the full
-    Manager action bundle — otherwise any Viewer/Editor, who also holds
-    ``*-view``, would pass. The global ``datasette-acl`` admin always wins.
-
-    Returns False (rather than raising) for unknown resource types.
-    """
-    if await can_edit_permissions(datasette, actor):
-        return True
-    manage = manage_only_actions(roles_for(datasette, resource_type))
-    if not manage:
-        # No manage role for this type: fall back to global admin (already
-        # checked above and was False), so non-admins cannot manage.
-        return False
-    try:
-        resource = build_resource(datasette, resource_type, parent, child)
-    except ValueError:
-        return False
-    for action in manage:
-        if await datasette.allowed(action=action, resource=resource, actor=actor):
-            return True
-    return False
 
 
 async def _ensure_can_manage(datasette, request, resource_type, parent, child=None):

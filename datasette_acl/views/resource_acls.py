@@ -1,7 +1,8 @@
 from datasette import Response, Forbidden
+from datasette_acl.grants import _ensure_resource_id
 from datasette_acl.utils import (
     actions_for_resource_type,
-    can_edit_permissions,
+    can_manage,
     generate_changes_message,
     get_acl_valid_actors,
     resource_class_for,
@@ -12,12 +13,6 @@ from urllib.parse import parse_qs
 
 
 async def manage_resource_acls(request, datasette):
-    # Admin page: gated on the global datasette-acl permission. Per-resource
-    # authorization (who may manage a specific resource) arrives with the JSON
-    # API in phase-02.
-    if not await can_edit_permissions(datasette, request.actor):
-        raise Forbidden("You do not have permission to edit permissions")
-
     resource_type = request.url_vars["resource_type"]
     parent = request.url_vars["parent"]
     child = request.url_vars.get("child")
@@ -26,6 +21,13 @@ async def manage_resource_acls(request, datasette):
     # class, otherwise there is nothing to manage.
     if resource_class_for(datasette, resource_type) is None:
         raise Forbidden(f"Unknown resource type: {resource_type}")
+
+    # Per-resource authorization: the global datasette-acl admin OR an actor who
+    # holds a manage=True role (Manager/Owner) on this specific resource —
+    # directly or via a group — so an object's owner can control its sharing
+    # without instance-wide permission. Mirrors the JSON API's can_manage gate.
+    if not await can_manage(datasette, request.actor, resource_type, parent, child):
+        raise Forbidden("You do not have permission to edit permissions")
 
     actions = actions_for_resource_type(datasette, resource_type)
 
@@ -37,17 +39,14 @@ async def manage_resource_acls(request, datasette):
         )
     ]
 
-    # Ensure we have a resource_id for this resource
-    await internal_db.execute_write(
-        "INSERT OR IGNORE INTO acl_resources (resource_type, parent, child) VALUES (?, ?, ?);",
-        [resource_type, parent, child],
+    # Ensure we have a resource_id for this resource. Use the shared helper
+    # rather than a bare INSERT OR IGNORE: SQLite treats NULL children as
+    # distinct in the UNIQUE(resource_type, parent, child) constraint, so a
+    # naive insert would duplicate the row for a parent-only resource that the
+    # JSON API (via grants._ensure_resource_id) already created.
+    resource_id = await _ensure_resource_id(
+        internal_db, resource_type, parent, child
     )
-    resource_id = (
-        await internal_db.execute(
-            "SELECT id FROM acl_resources WHERE resource_type = ? AND parent = ? AND child IS ?",
-            [resource_type, parent, child],
-        )
-    ).single_value()
 
     current_group_permissions = {}
     current_user_permissions = {}

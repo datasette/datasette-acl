@@ -456,3 +456,81 @@ async def test_csrf_same_origin_post_accepted(api_ds):
     )
     assert response.status_code == 200
     assert response.json()["ok"] is True
+
+
+# --- HTML admin page per-resource authorization (issue #42) ---------------
+#
+# The /-/acl/resource/... admin page used to gate on the global datasette-acl
+# permission only. It now shares the JSON API's per-resource can_manage gate, so
+# the owner of an object (an actor holding a manage=True role on that specific
+# resource) can administer its sharing without instance-wide permission.
+
+HTML_PAGE_URL = "/-/acl/resource/mock-doc/42"
+
+
+@pytest.mark.asyncio
+async def test_html_page_manager_can_view(api_ds):
+    # mallory holds the Manager role on mock-doc/42 but is NOT the global admin.
+    await grant(
+        api_ds, "mock-doc", "42", actor_id="mallory", role="Manager", by_actor="root"
+    )
+    response = await api_ds.client.get(HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory"))
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_html_page_manager_can_grant_via_post(api_ds):
+    # A per-resource Manager can grant a raw action through the HTML form,
+    # without the global datasette-acl permission.
+    await grant(
+        api_ds, "mock-doc", "42", actor_id="mallory", role="Manager", by_actor="root"
+    )
+    response = await api_ds.client.post(
+        HTML_PAGE_URL,
+        data={"new_actor_id": "bob", "new_user_actions": "doc-view"},
+        cookies=_cookie(api_ds, "mallory"),
+    )
+    assert response.status_code == 302
+    assert await api_ds.allowed(
+        action="doc-view", resource=DocResource("42"), actor={"id": "bob"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_html_page_group_manager_can_view(api_ds):
+    # The Manager role held via a group also unlocks the HTML page.
+    gid = await _group_id(api_ds, "staff")
+    db = api_ds.get_internal_database()
+    await db.execute_write(
+        "INSERT INTO acl_actor_groups (actor_id, group_id) VALUES (?, ?)",
+        ["mallory", gid],
+    )
+    await grant(
+        api_ds, "mock-doc", "42", group_id=gid, role="Manager", by_actor="root"
+    )
+    response = await api_ds.client.get(HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory"))
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_html_page_non_manager_forbidden(api_ds):
+    # No role on the resource and not the global admin -> 403.
+    response = await api_ds.client.get(HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory"))
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_html_page_non_manage_role_forbidden(api_ds):
+    # Editor is not a manage role, so it must NOT unlock the admin page.
+    await grant(
+        api_ds, "mock-doc", "42", actor_id="mallory", role="Editor", by_actor="root"
+    )
+    response = await api_ds.client.get(HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory"))
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_html_page_global_admin_can_view(api_ds):
+    # The global datasette-acl admin still gets in (back-compat).
+    response = await api_ds.client.get(HTML_PAGE_URL, cookies=_root_cookie(api_ds))
+    assert response.status_code == 200

@@ -2,6 +2,8 @@ from collections import namedtuple
 from datasette.app import Datasette
 from datasette.resources import TableResource
 from datasette_acl import update_dynamic_groups
+from datasette_acl.internal_migrations import internal_migrations
+from sqlite_utils import Database
 import pytest
 
 
@@ -551,21 +553,25 @@ async def test_fresh_acl_resources_schema():
 
 @pytest.mark.asyncio
 async def test_acl_resources_migration():
-    # An internal DB carrying the OLD (database, resource) schema with rows
-    # should migrate in place to (resource_type, parent, child), backfilling
+    # Drive the migrations directly: apply everything up to m002 to get the OLD
+    # (database, resource) acl_resources schema, insert rows, then run m002 and
+    # assert the data migrates to (resource_type, parent, child), backfilling
     # resource_type='table' and preserving id/parent/child values.
     datasette = Datasette(memory=True)
     db = datasette.get_internal_database()
-    await db.execute_write_script(
-        """
-        create table acl_resources (
-            id integer primary key,
-            database text not null,
-            resource text,
-            unique(database, resource)
-        );
-        """
+
+    await db.execute_write_fn(
+        lambda conn: internal_migrations.apply(
+            Database(conn), stop_before="m002_generalize_acl_resources"
+        )
     )
+
+    # m001 created acl_resources with the old (database, resource) columns
+    cols_before = [
+        r["name"] for r in (await db.execute("PRAGMA table_info(acl_resources)"))
+    ]
+    assert cols_before == ["id", "database", "resource"]
+
     await db.execute_write(
         "insert into acl_resources (database, resource) values (?, ?)", ["db1", "t1"]
     )
@@ -573,13 +579,8 @@ async def test_acl_resources_migration():
         "insert into acl_resources (database, resource) values (?, ?)", ["db2", "t2"]
     )
 
-    # Sanity check: old columns present before startup
-    cols_before = [
-        r["name"] for r in (await db.execute("PRAGMA table_info(acl_resources)"))
-    ]
-    assert cols_before == ["id", "database", "resource"]
-
-    await datasette.invoke_startup()
+    # Apply the remaining migrations (m002)
+    await db.execute_write_fn(lambda conn: internal_migrations.apply(Database(conn)))
 
     cols_after = [
         r["name"] for r in (await db.execute("PRAGMA table_info(acl_resources)"))
@@ -597,8 +598,8 @@ async def test_acl_resources_migration():
     # The leftover scratch table must be gone.
     assert "acl_resources_old" not in await db.table_names()
 
-    # Running startup again is idempotent: no error, no duplicate rows.
-    await datasette.invoke_startup()
+    # Re-applying is idempotent: no error, no duplicate rows.
+    await db.execute_write_fn(lambda conn: internal_migrations.apply(Database(conn)))
     rows_again = [
         dict(r)
         for r in (await db.execute("select * from acl_resources order by id"))

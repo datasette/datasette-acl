@@ -65,58 +65,64 @@ async def widget_ds():
         pm.unregister(name="widget-plugin")
 
 
-async def _grant_actor(datasette, actor_id, resource_type, parent, child, action):
-    db = datasette.get_internal_database()
-    await db.execute_write(
-        "INSERT OR IGNORE INTO acl_resources (resource_type, parent, child) VALUES (?, ?, ?)",
-        [resource_type, parent, child],
+async def _upsert_resource_id(db, resource_type, parent, child):
+    # A plain INSERT OR IGNORE ... RETURNING yields no row when the resource
+    # already exists, so use a no-op upsert to always get the id back.
+    return await db.execute_write_fn(
+        lambda conn: conn.execute(
+            """
+            INSERT INTO acl_resources (resource_type, parent, child)
+            VALUES (?, ?, ?)
+            ON CONFLICT(resource_type, parent, child)
+                DO UPDATE SET resource_type = excluded.resource_type
+            RETURNING id
+            """,
+            [resource_type, parent, child],
+        ).fetchone()[0]
     )
+
+
+async def _grant_actor(datasette, *, actor_id, resource_type, parent, child, action):
+    db = datasette.get_internal_database()
+    resource_id = await _upsert_resource_id(db, resource_type, parent, child)
     await db.execute_write(
         """
         INSERT INTO acl (actor_id, group_id, resource_id, action_id)
         VALUES (
             :actor_id,
             null,
-            (SELECT id FROM acl_resources WHERE resource_type = :rt AND parent = :p AND child = :c),
+            :resource_id,
             (SELECT id FROM acl_actions WHERE name = :action)
         )
         """,
-        {
-            "actor_id": actor_id,
-            "rt": resource_type,
-            "p": parent,
-            "c": child,
-            "action": action,
-        },
+        {"actor_id": actor_id, "resource_id": resource_id, "action": action},
     )
 
 
-async def _grant_group(datasette, group_name, resource_type, parent, child, action):
+async def _grant_group(datasette, *, group_name, resource_type, parent, child, action):
     db = datasette.get_internal_database()
-    await db.execute_write(
-        "INSERT OR IGNORE INTO acl_groups (name) VALUES (?)", [group_name]
+    group_id = await db.execute_write_fn(
+        lambda conn: conn.execute(
+            """
+            INSERT INTO acl_groups (name) VALUES (?)
+            ON CONFLICT(name) DO UPDATE SET name = excluded.name
+            RETURNING id
+            """,
+            [group_name],
+        ).fetchone()[0]
     )
-    await db.execute_write(
-        "INSERT OR IGNORE INTO acl_resources (resource_type, parent, child) VALUES (?, ?, ?)",
-        [resource_type, parent, child],
-    )
+    resource_id = await _upsert_resource_id(db, resource_type, parent, child)
     await db.execute_write(
         """
         INSERT INTO acl (actor_id, group_id, resource_id, action_id)
         VALUES (
             null,
-            (SELECT id FROM acl_groups WHERE name = :group_name),
-            (SELECT id FROM acl_resources WHERE resource_type = :rt AND parent = :p AND child = :c),
+            :group_id,
+            :resource_id,
             (SELECT id FROM acl_actions WHERE name = :action)
         )
         """,
-        {
-            "group_name": group_name,
-            "rt": resource_type,
-            "p": parent,
-            "c": child,
-            "action": action,
-        },
+        {"group_id": group_id, "resource_id": resource_id, "action": action},
     )
 
 
@@ -129,7 +135,14 @@ async def test_direct_grant_on_custom_resource(widget_ds):
         action="widget-view", resource=resource, actor=actor
     )
     # Grant a direct actor permission on the custom resource type
-    await _grant_actor(widget_ds, "alice", "widget", "shelf", "gadget", "widget-view")
+    await _grant_actor(
+        widget_ds,
+        actor_id="alice",
+        resource_type="widget",
+        parent="shelf",
+        child="gadget",
+        action="widget-view",
+    )
     assert await widget_ds.allowed(
         action="widget-view", resource=resource, actor=actor
     )
@@ -151,7 +164,12 @@ async def test_group_grant_on_custom_resource(widget_ds):
         """
     )
     await _grant_group(
-        widget_ds, "widgets", "widget", "shelf", "gadget", "widget-view"
+        widget_ds,
+        group_name="widgets",
+        resource_type="widget",
+        parent="shelf",
+        child="gadget",
+        action="widget-view",
     )
     resource = WidgetResource("shelf", "gadget")
     assert await widget_ds.allowed(
@@ -166,7 +184,14 @@ async def test_group_grant_on_custom_resource(widget_ds):
 @pytest.mark.asyncio
 async def test_resource_type_does_not_leak(widget_ds):
     # Grant alice access to a *table* resource with the same parent/child
-    await _grant_actor(widget_ds, "alice", "table", "shelf", "gadget", "insert-row")
+    await _grant_actor(
+        widget_ds,
+        actor_id="alice",
+        resource_type="table",
+        parent="shelf",
+        child="gadget",
+        action="insert-row",
+    )
     # That must NOT grant her the widget-view action on the widget resource
     resource = WidgetResource("shelf", "gadget")
     assert not await widget_ds.allowed(
@@ -178,7 +203,12 @@ async def test_resource_type_does_not_leak(widget_ds):
 async def test_signed_in_wildcard_grant(widget_ds):
     # Grant _signed_in => any actor with an id is allowed, anonymous is not
     await _grant_actor(
-        widget_ds, "_signed_in", "widget", "shelf", "gadget", "widget-view"
+        widget_ds,
+        actor_id="_signed_in",
+        resource_type="widget",
+        parent="shelf",
+        child="gadget",
+        action="widget-view",
     )
     resource = WidgetResource("shelf", "gadget")
     assert await widget_ds.allowed(
@@ -192,7 +222,14 @@ async def test_signed_in_wildcard_grant(widget_ds):
 @pytest.mark.asyncio
 async def test_anonymous_wildcard_grant(widget_ds):
     # Grant '*' => literally anyone, including anonymous
-    await _grant_actor(widget_ds, "*", "widget", "shelf", "gadget", "widget-view")
+    await _grant_actor(
+        widget_ds,
+        actor_id="*",
+        resource_type="widget",
+        parent="shelf",
+        child="gadget",
+        action="widget-view",
+    )
     resource = WidgetResource("shelf", "gadget")
     assert await widget_ds.allowed(
         action="widget-view", resource=resource, actor=None

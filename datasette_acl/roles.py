@@ -7,11 +7,16 @@ keyed by ``resource_type``. Helpers resolve a granted action-set to its
 best-matching role and back.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
 from datasette.plugins import pm
 from datasette.utils import await_me_maybe
+
+if TYPE_CHECKING:
+    from datasette.app import Datasette
 
 
 @dataclass
@@ -55,6 +60,18 @@ async def build_roles_registry(datasette) -> Dict[str, List[AclRole]]:
     return registry
 
 
+def roles_for(datasette: Datasette, resource_type: str) -> List[AclRole]:
+    """Return the registered roles for ``resource_type`` (``[]`` if none).
+
+    Reads the registry cached on the Datasette instance at startup by
+    :func:`build_roles_registry` (see ``datasette_acl.startup``). Shared by the
+    grants layer and the JSON API so neither pokes ``_acl_roles_registry``
+    directly.
+    """
+    registry = getattr(datasette, "_acl_roles_registry", None) or {}
+    return registry.get(resource_type, [])
+
+
 def role_for_actions(
     roles: List[AclRole], granted: Set[str]
 ) -> Optional[AclRole]:
@@ -83,10 +100,36 @@ def actions_for_role(roles: List[AclRole], name: str) -> Optional[List[str]]:
 def manage_actions(roles: List[AclRole]) -> Set[str]:
     """Union of actions across all ``manage=True`` roles for a resource type.
 
-    These are the actions that authorize re-sharing a resource (see task 04).
+    This is the full action bundle a manage role carries (e.g. Manager =
+    view+edit+manage). Use :func:`manage_only_actions` for the authorization
+    check — see its docstring for why the union is the wrong gate.
     """
     actions: Set[str] = set()
     for role in roles:
         if role.manage:
             actions.update(role.actions)
     return actions
+
+
+def manage_only_actions(roles: List[AclRole]) -> Set[str]:
+    """Actions that authorize re-sharing: those exclusive to ``manage`` roles.
+
+    A manage role typically *bundles* the lower roles' actions (Manager =
+    Viewer + Editor + ``manage``). Authorizing against the full bundle
+    (:func:`manage_actions`) would wrongly let any Viewer/Editor manage sharing,
+    since they too hold ``doc-view``. The action(s) that actually distinguish a
+    manager are those appearing only in ``manage=True`` roles and in no
+    non-manage role — typically a single ``*-manage`` action. Holding any one of
+    these is what grants re-share ability (task 04 §D).
+
+    Returns the empty set if no role is marked ``manage`` (callers then fall back
+    to the global ``datasette-acl`` permission).
+    """
+    manage_union: Set[str] = set()
+    non_manage_union: Set[str] = set()
+    for role in roles:
+        if role.manage:
+            manage_union.update(role.actions)
+        else:
+            non_manage_union.update(role.actions)
+    return manage_union - non_manage_union

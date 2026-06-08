@@ -25,6 +25,8 @@ This plugin is under active development. It currently only supports configuring 
 
 Permissions are saved in the internal database. This means you should run Datasette with the `--internal path/to/internal.db` option, otherwise your permissions will be reset every time you restart Datasette.
 
+A JSON HTTP API for reading and managing per-resource grants programmatically is documented in [docs/json-api.md](docs/json-api.md).
+
 ### Managing permissions for a table
 
 The interface for configuring table permissions lives at `/database-name/table-name/-/acl`. It can be accessed from the table actions menu on the table page.

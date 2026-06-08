@@ -534,3 +534,85 @@ async def test_html_page_global_admin_can_view(api_ds):
     # The global datasette-acl admin still gets in (back-compat).
     response = await api_ds.client.get(HTML_PAGE_URL, cookies=_root_cookie(api_ds))
     assert response.status_code == 200
+
+
+# --- raw actions not validated against the resource type (issue #45) -------
+#
+# SECURITY: grant(..., actions=[...]) used to accept ANY string, and
+# _ensure_actions inserted unknown names straight into acl_actions. The
+# resource-type filter in permission_resources_sql blocks cross-type leakage,
+# but a per-resource Manager could still persist arbitrary or *future* action
+# names for their own resource type. If a later plugin/version registered an
+# action with that name for the same resource type, the stale grant would
+# silently become live -- a privilege-escalation foothold planted ahead of time.
+#
+# Fixed in _resolve_actions: raw actions are now validated against
+# actions_for_resource_type(...) and an unknown name raises ValueError (-> 400).
+
+
+async def _acl_action_names(datasette):
+    rows = await datasette.get_internal_database().execute(
+        "SELECT name FROM acl_actions"
+    )
+    return {r["name"] for r in rows.rows}
+
+
+@pytest.mark.asyncio
+async def test_grant_helper_rejects_unknown_raw_action(api_ds):
+    # The Python helper must refuse an action that the resource type does not
+    # register, rather than silently inventing it.
+    with pytest.raises(ValueError):
+        await grant(
+            api_ds, "mock-doc", "42", actor_id="bob", actions=["not-real"], by_actor="root"
+        )
+    # And nothing must have been persisted.
+    assert "not-real" not in await _acl_action_names(api_ds)
+    assert await list_grants(api_ds, "mock-doc", "42") == []
+
+
+@pytest.mark.asyncio
+async def test_api_grant_rejects_unknown_raw_action(api_ds):
+    # The JSON API must return 400 for an unknown raw action, per the issue.
+    response = await _post(
+        api_ds,
+        GRANT_URL,
+        json={"actor_id": "bob", "actions": ["not-real"]},
+        cookies=_root_cookie(api_ds),
+    )
+    assert response.status_code == 400
+    assert await list_grants(api_ds, "mock-doc", "42") == []
+
+
+@pytest.mark.asyncio
+async def test_grant_unknown_action_partial_list_is_atomic(api_ds):
+    # A mix of one valid and one bogus action must be rejected wholesale -- the
+    # valid action must NOT be written when a sibling is invalid.
+    with pytest.raises(ValueError):
+        await grant(
+            api_ds,
+            "mock-doc",
+            "42",
+            actor_id="bob",
+            actions=["doc-view", "not-real"],
+            by_actor="root",
+        )
+    assert await list_grants(api_ds, "mock-doc", "42") == []
+
+
+@pytest.mark.asyncio
+async def test_future_action_name_not_persisted_as_stale_grant(api_ds):
+    # The escalation scenario: a per-resource Manager (not a global admin) tries
+    # to pre-plant a grant for "doc-superpower" -- a name NOT registered for
+    # mock-doc today, but which a future version might add. It must be rejected,
+    # and must never reach acl_actions, so it cannot go live later.
+    await grant(
+        api_ds, "mock-doc", "42", actor_id="mallory", role="Manager", by_actor="root"
+    )
+    response = await _post(
+        api_ds,
+        GRANT_URL,
+        json={"actor_id": "bob", "actions": ["doc-superpower"]},
+        cookies=_cookie(api_ds, "mallory"),
+    )
+    assert response.status_code == 400
+    assert "doc-superpower" not in await _acl_action_names(api_ds)

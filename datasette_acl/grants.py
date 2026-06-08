@@ -28,6 +28,7 @@ from typing import (
 )
 
 from datasette_acl.roles import actions_for_role, roles_for
+from datasette_acl.utils import actions_for_resource_type
 
 if TYPE_CHECKING:
     from datasette.app import Datasette
@@ -53,7 +54,11 @@ def _resolve_actions(
     """Resolve the action list for a grant from either ``role`` or ``actions``.
 
     Exactly one of ``role`` / ``actions`` must be provided. ``role`` is resolved
-    against the startup roles registry via :func:`actions_for_role`.
+    against the startup roles registry via :func:`actions_for_role`. Raw
+    ``actions`` are validated against the actions the resource type actually
+    registers (:func:`actions_for_resource_type`) -- otherwise an unknown or
+    future action name would be invented in ``acl_actions`` and could silently
+    become a live grant once a later version registers it (issue #45).
     """
     if (role is None) == (actions is None):
         raise ValueError("Provide exactly one of role= or actions=")
@@ -66,7 +71,14 @@ def _resolve_actions(
         return list(resolved)
     # The guard above guarantees actions is not None when role is None.
     assert actions is not None
-    return list(actions)
+    requested = list(actions)
+    valid = set(actions_for_resource_type(datasette, resource_type))
+    unknown = [action for action in requested if action not in valid]
+    if unknown:
+        raise ValueError(
+            f"Unknown action(s) {unknown!r} for resource type {resource_type!r}"
+        )
+    return requested
 
 
 def _check_principal(actor_id: Optional[str], group_id: Optional[int]) -> None:

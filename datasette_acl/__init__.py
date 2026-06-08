@@ -12,6 +12,10 @@ from datasette_acl.utils import can_edit_permissions
 from datasette_acl.views.table_acls import manage_table_acls
 from datasette_acl.views.groups import manage_groups, manage_group
 from datasette_acl.views.resource_groups import (
+    delete_resource_group_grant_json,
+    delete_resource_group_item_json,
+    manage_resource_group,
+    manage_resource_groups,
     resource_group_grants_json,
     resource_group_json,
     resource_group_resources_json,
@@ -590,9 +594,13 @@ def menu_links(datasette, actor, request=None):
         if await can_edit_permissions(datasette, actor):
             return [
                 {
+                    "href": datasette.urls.path("/-/acl/resource-groups"),
+                    "label": "Manage resource groups",
+                },
+                {
                     "href": datasette.urls.path("/-/acl/groups"),
                     "label": "Manage user groups",
-                }
+                },
             ]
 
     return inner
@@ -614,4 +622,14 @@ def register_routes():
             "^/-/acl/resource-groups/(?P<slug>[^/]+)/grants\\.json$",
             resource_group_grants_json,
         ),
+        (
+            "^/-/acl/resource-groups/(?P<slug>[^/]+)/resources/(?P<id>[^/]+)\\.json$",
+            delete_resource_group_item_json,
+        ),
+        (
+            "^/-/acl/resource-groups/(?P<slug>[^/]+)/grants/(?P<id>[^/]+)\\.json$",
+            delete_resource_group_grant_json,
+        ),
+        ("^/-/acl/resource-groups$", manage_resource_groups),
+        ("^/-/acl/resource-groups/(?P<slug>[^/]+)$", manage_resource_group),
     ]

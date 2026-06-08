@@ -133,10 +133,14 @@ async def validate_resource(datasette, resource_type, resource_key):
             return "Query resources must use database/query-name format"
         database_name, query_name = resource_key.split("/", 1)
         try:
-            database = datasette.get_database(database_name)
+            datasette.get_database(database_name)
         except KeyError:
             return f"Database not found: {database_name}"
         queries = await datasette.get_canned_queries(database_name, actor=None)
+        metadata_queries = (
+            (datasette._metadata_local or {}).get("databases") or {}
+        ).get(database_name, {}).get("queries") or {}
+        queries.update(metadata_queries)
         if query_name not in queries:
             return f"Query not found: {resource_key}"
         return None
@@ -188,14 +192,37 @@ async def ensure_resource_group(
     return await get_resource_group(db, slug)
 
 
-async def get_resource_group(db, slug):
+async def create_resource_group(db, slug, name, description=None, created_by=None):
+    existing = await get_resource_group(db, slug, include_deleted=True)
+    if existing is not None:
+        return None
+    await db.execute_write(
+        """
+        insert into acl_resource_groups (
+            slug, name, description, created_by, updated_at, deleted
+        ) values (
+            :slug, :name, :description, :created_by, datetime('now'), 0
+        )
+        """,
+        {
+            "slug": slug,
+            "name": name,
+            "description": description,
+            "created_by": created_by,
+        },
+    )
+    return await get_resource_group(db, slug)
+
+
+async def get_resource_group(db, slug, include_deleted=False):
     row = await db.execute(
         """
         select slug, name, description, deleted
         from acl_resource_groups
         where slug = :slug
+          and (:include_deleted = 1 or deleted = 0)
         """,
-        {"slug": slug},
+        {"slug": slug, "include_deleted": int(include_deleted)},
     )
     return row.first()
 
@@ -347,6 +374,189 @@ async def get_resource_group_detail(db, slug):
         ).rows
     ]
     return detail
+
+
+async def add_resource_group_item(
+    db, slug, resource_type, resource_key, note=None, added_by=None
+):
+    existing = (
+        await db.execute(
+            """
+            select id, resource_type, resource_key, note
+            from acl_resource_group_items
+            where resource_group_id = (
+                select id from acl_resource_groups where slug = :slug
+            )
+              and resource_type = :resource_type
+              and resource_key = :resource_key
+            """,
+            {
+                "slug": slug,
+                "resource_type": resource_type,
+                "resource_key": resource_key,
+            },
+        )
+    ).first()
+    if existing is not None:
+        return None
+    await db.execute_write(
+        """
+        insert into acl_resource_group_items (
+            resource_group_id, resource_type, resource_key, note, added_by
+        ) values (
+            (select id from acl_resource_groups where slug = :slug),
+            :resource_type,
+            :resource_key,
+            :note,
+            :added_by
+        )
+        """,
+        {
+            "slug": slug,
+            "resource_type": resource_type,
+            "resource_key": resource_key,
+            "note": note,
+            "added_by": added_by,
+        },
+    )
+    return (
+        await db.execute(
+            """
+            select id, resource_type, resource_key, note
+            from acl_resource_group_items
+            where resource_group_id = (
+                select id from acl_resource_groups where slug = :slug
+            )
+              and resource_type = :resource_type
+              and resource_key = :resource_key
+            """,
+            {
+                "slug": slug,
+                "resource_type": resource_type,
+                "resource_key": resource_key,
+            },
+        )
+    ).first()
+
+
+async def add_resource_group_grant(
+    db,
+    slug,
+    actor_id=None,
+    actor_group_id=None,
+    role_name=None,
+    action_name=None,
+    granted_by=None,
+    expires_at=None,
+):
+    existing = (
+        await db.execute(
+            """
+            select
+                rgg.id,
+                rgg.actor_id,
+                ag.name as actor_group,
+                rgg.role_name,
+                rgg.action_name,
+                rgg.expires_at
+            from acl_resource_group_grants rgg
+            left join acl_groups ag on ag.id = rgg.actor_group_id
+            where rgg.resource_group_id = (
+                select id from acl_resource_groups where slug = :slug
+            )
+              and ((:actor_id is null and rgg.actor_id is null) or rgg.actor_id = :actor_id)
+              and (
+                (:actor_group_id is null and rgg.actor_group_id is null)
+                or rgg.actor_group_id = :actor_group_id
+              )
+              and ((:role_name is null and rgg.role_name is null) or rgg.role_name = :role_name)
+              and (
+                (:action_name is null and rgg.action_name is null)
+                or rgg.action_name = :action_name
+              )
+              and (
+                (:expires_at is null and rgg.expires_at is null)
+                or rgg.expires_at = :expires_at
+              )
+            """,
+            {
+                "slug": slug,
+                "actor_id": actor_id,
+                "actor_group_id": actor_group_id,
+                "role_name": role_name,
+                "action_name": action_name,
+                "expires_at": expires_at,
+            },
+        )
+    ).first()
+    if existing is not None:
+        return None
+    await db.execute_write(
+        """
+        insert into acl_resource_group_grants (
+            resource_group_id, actor_id, actor_group_id, role_name, action_name, granted_by, expires_at
+        ) values (
+            (select id from acl_resource_groups where slug = :slug),
+            :actor_id,
+            :actor_group_id,
+            :role_name,
+            :action_name,
+            :granted_by,
+            :expires_at
+        )
+        """,
+        {
+            "slug": slug,
+            "actor_id": actor_id,
+            "actor_group_id": actor_group_id,
+            "role_name": role_name,
+            "action_name": action_name,
+            "granted_by": granted_by,
+            "expires_at": expires_at,
+        },
+    )
+    return (
+        await db.execute(
+            """
+            select
+                rgg.id,
+                rgg.actor_id,
+                ag.name as actor_group,
+                rgg.role_name,
+                rgg.action_name,
+                rgg.expires_at
+            from acl_resource_group_grants rgg
+            left join acl_groups ag on ag.id = rgg.actor_group_id
+            where rgg.resource_group_id = (
+                select id from acl_resource_groups where slug = :slug
+            )
+              and ((:actor_id is null and rgg.actor_id is null) or rgg.actor_id = :actor_id)
+              and (
+                (:actor_group_id is null and rgg.actor_group_id is null)
+                or rgg.actor_group_id = :actor_group_id
+              )
+              and ((:role_name is null and rgg.role_name is null) or rgg.role_name = :role_name)
+              and (
+                (:action_name is null and rgg.action_name is null)
+                or rgg.action_name = :action_name
+              )
+              and (
+                (:expires_at is null and rgg.expires_at is null)
+                or rgg.expires_at = :expires_at
+              )
+            order by rgg.id desc
+            limit 1
+            """,
+            {
+                "slug": slug,
+                "actor_id": actor_id,
+                "actor_group_id": actor_group_id,
+                "role_name": role_name,
+                "action_name": action_name,
+                "expires_at": expires_at,
+            },
+        )
+    ).first()
 
 
 def table_resource_group_slug(database, table):

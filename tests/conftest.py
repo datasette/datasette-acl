@@ -11,6 +11,13 @@ def pytest_configure():
 async def ds():
     datasette = Datasette(
         config={
+            "databases": {
+                "db": {
+                    "queries": {
+                        "recent": "select id from t order by id desc",
+                    }
+                }
+            },
             "plugins": {
                 "datasette-acl": {
                     "dynamic-groups": {

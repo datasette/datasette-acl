@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+
+{% block title %}Resource groups{% endblock %}
+
+{% block extra_head %}
+<style>
+:root {
+  --acl-panel: linear-gradient(180deg, rgba(255, 252, 245, 0.98) 0%, rgba(255, 255, 255, 0.98) 100%);
+  --acl-line: #d8d1c4;
+  --acl-ink: #1f2933;
+  --acl-accent: #0f766e;
+  --acl-accent-soft: #dff7f3;
+  --acl-warm: #b45309;
+  --acl-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+}
+.acl-shell {
+  display: grid;
+  gap: 1.5rem;
+  background:
+    radial-gradient(circle at top left, rgba(255, 247, 237, 0.9), transparent 30%),
+    radial-gradient(circle at top right, rgba(224, 242, 254, 0.9), transparent 25%);
+  padding: 0.5rem 0 1rem 0;
+}
+.acl-card {
+  background: var(--acl-panel);
+  border: 1px solid var(--acl-line);
+  border-radius: 18px;
+  padding: 1.2rem 1.35rem;
+  box-shadow: var(--acl-shadow);
+}
+.acl-grid {
+  display: grid;
+  gap: 1rem;
+}
+.acl-row {
+  display: grid;
+  gap: 0.35rem;
+}
+.acl-inline {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.acl-metrics {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+.acl-pill {
+  background: var(--acl-accent-soft);
+  color: var(--acl-accent);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.9rem;
+}
+.acl-list {
+  display: grid;
+  gap: 1rem;
+}
+.acl-layout {
+  display: grid;
+  gap: 1rem;
+}
+.acl-hero {
+  position: relative;
+  overflow: hidden;
+}
+.acl-hero:before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(120deg, rgba(15, 118, 110, 0.08), transparent 40%),
+    linear-gradient(300deg, rgba(180, 83, 9, 0.1), transparent 45%);
+  pointer-events: none;
+}
+.acl-hero > * {
+  position: relative;
+}
+.acl-summary {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  margin-top: 1rem;
+}
+.acl-stat {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(216, 209, 196, 0.85);
+  border-radius: 16px;
+  padding: 0.85rem 1rem;
+}
+.acl-stat strong {
+  display: block;
+  font-size: 1.5rem;
+}
+.acl-input,
+.acl-textarea {
+  width: 100%;
+  max-width: 42rem;
+  border: 1px solid var(--acl-line);
+  border-radius: 12px;
+  padding: 0.7rem 0.9rem;
+  font: inherit;
+}
+.acl-textarea {
+  min-height: 5rem;
+}
+.acl-button {
+  border: 0;
+  border-radius: 999px;
+  background: var(--acl-ink);
+  color: white;
+  padding: 0.7rem 1rem;
+  font: inherit;
+  cursor: pointer;
+}
+.acl-button.secondary {
+  background: var(--acl-warm);
+}
+.acl-muted {
+  color: #52606d;
+}
+@media (min-width: 980px) {
+  .acl-layout {
+    grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr);
+    align-items: start;
+  }
+  .acl-card.sticky {
+    position: sticky;
+    top: 1rem;
+  }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="acl-shell">
+  <section class="acl-card acl-hero">
+    <h1>Resource groups</h1>
+    <p class="acl-muted">Manage reusable permission boundaries for tables, databases, queries, and plugin-defined resources.</p>
+    <form action="{{ request.path }}" method="get" class="acl-inline">
+      <label for="q">Search</label>
+      <input id="q" class="acl-input" type="search" name="q" value="{{ search }}" placeholder="Search by slug or name">
+      <button class="acl-button secondary" type="submit">Filter</button>
+    </form>
+    <div class="acl-summary">
+      <div class="acl-stat">
+        <span class="acl-muted">Groups</span>
+        <strong>{{ resource_groups|length }}</strong>
+      </div>
+      <div class="acl-stat">
+        <span class="acl-muted">Resources tracked</span>
+        <strong>{{ resource_groups|sum(attribute='resources_count') }}</strong>
+      </div>
+      <div class="acl-stat">
+        <span class="acl-muted">Grants tracked</span>
+        <strong>{{ resource_groups|sum(attribute='grants_count') }}</strong>
+      </div>
+    </div>
+  </section>
+
+  <div class="acl-layout">
+    <section class="acl-list">
+      {% for resource_group in resource_groups %}
+        <article class="acl-card">
+          <h2><a href="{{ urls.path("/-/acl/resource-groups/" + resource_group.slug) }}">{{ resource_group.name }}</a></h2>
+          <p><code>{{ resource_group.slug }}</code></p>
+          {% if resource_group.description %}<p class="acl-muted">{{ resource_group.description }}</p>{% endif %}
+          <div class="acl-metrics">
+            <span class="acl-pill">{{ resource_group.resources_count }} resources</span>
+            <span class="acl-pill">{{ resource_group.grants_count }} grants</span>
+          </div>
+        </article>
+      {% else %}
+        <section class="acl-card">
+          <p class="acl-muted">No resource groups yet.</p>
+        </section>
+      {% endfor %}
+    </section>
+
+    <section class="acl-card sticky">
+      <h2>Create a resource group</h2>
+      <form action="{{ request.path }}" method="post" class="acl-grid">
+        <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+        <label class="acl-row">Slug
+          <input class="acl-input" type="text" name="slug" placeholder="project-alpha">
+        </label>
+        <label class="acl-row">Name
+          <input class="acl-input" type="text" name="name" placeholder="Project Alpha">
+        </label>
+        <label class="acl-row">Description
+          <textarea class="acl-textarea" name="description" placeholder="What belongs in this group?"></textarea>
+        </label>
+        <div>
+          <button class="acl-button" type="submit">Create resource group</button>
+        </div>
+      </form>
+    </section>
+  </div>
+</div>
+{% endblock %}

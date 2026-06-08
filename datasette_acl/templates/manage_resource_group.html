@@ -1,0 +1,309 @@
+{% extends "base.html" %}
+
+{% block title %}{{ resource_group.name }}{% endblock %}
+
+{% block extra_head %}
+<style>
+:root {
+  --acl-bg: radial-gradient(circle at top left, #fff7ed 0%, #fff 45%, #eef6ff 100%);
+  --acl-card: rgba(255, 255, 255, 0.92);
+  --acl-line: #d8d1c4;
+  --acl-ink: #172033;
+  --acl-accent: #0f766e;
+  --acl-danger: #b91c1c;
+}
+.resource-group-shell {
+  display: grid;
+  gap: 1rem;
+  background: var(--acl-bg);
+  padding: 0.5rem 0;
+}
+.resource-group-card {
+  background: var(--acl-card);
+  border: 1px solid var(--acl-line);
+  border-radius: 20px;
+  padding: 1.2rem 1.35rem;
+  box-shadow: 0 10px 36px rgba(15, 23, 42, 0.08);
+}
+.resource-group-hero {
+  position: relative;
+  overflow: hidden;
+}
+.resource-group-hero:before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(130deg, rgba(15, 118, 110, 0.08), transparent 38%),
+    radial-gradient(circle at top right, rgba(234, 179, 8, 0.14), transparent 26%);
+  pointer-events: none;
+}
+.resource-group-hero > * {
+  position: relative;
+}
+.resource-group-grid {
+  display: grid;
+  gap: 1rem;
+}
+.resource-group-form {
+  display: grid;
+  gap: 0.75rem;
+}
+.resource-group-form label {
+  display: grid;
+  gap: 0.35rem;
+}
+.resource-group-input,
+.resource-group-textarea,
+.resource-group-select {
+  width: 100%;
+  border: 1px solid var(--acl-line);
+  border-radius: 12px;
+  padding: 0.7rem 0.9rem;
+  font: inherit;
+  background: white;
+}
+.resource-group-textarea {
+  min-height: 4.5rem;
+}
+.resource-group-button {
+  border: 0;
+  border-radius: 999px;
+  background: var(--acl-ink);
+  color: white;
+  padding: 0.65rem 1rem;
+  font: inherit;
+  cursor: pointer;
+}
+.resource-group-button.danger {
+  background: var(--acl-danger);
+}
+.resource-group-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.resource-group-table th,
+.resource-group-table td {
+  border-top: 1px solid #e5ded4;
+  padding: 0.7rem 0.4rem;
+  text-align: left;
+  vertical-align: top;
+}
+.resource-group-table tbody tr:nth-child(odd) {
+  background: rgba(255, 247, 237, 0.35);
+}
+.resource-group-kicker {
+  color: #52606d;
+}
+.resource-group-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.resource-group-summary {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  margin-top: 1rem;
+}
+.resource-group-stat {
+  border: 1px solid rgba(216, 209, 196, 0.85);
+  border-radius: 16px;
+  padding: 0.85rem 0.95rem;
+  background: rgba(255, 255, 255, 0.9);
+}
+.resource-group-stat strong {
+  display: block;
+  font-size: 1.4rem;
+}
+code.inline-chip {
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--acl-accent);
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+}
+@media (min-width: 900px) {
+  .resource-group-grid.two {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+</style>
+{% endblock %}
+
+{% block crumbs %}
+<p class="crumbs">
+  <a href="{{ urls.path("/") }}">home</a>
+  /
+  <a href="{{ urls.path("/-/acl/resource-groups") }}">resource groups</a>
+  /
+  {{ resource_group.slug }}
+</p>
+{% endblock %}
+
+{% block content %}
+<div class="resource-group-shell">
+  <section class="resource-group-card resource-group-hero">
+    <p class="resource-group-kicker"><code class="inline-chip">{{ resource_group.slug }}</code></p>
+    <h1>{{ resource_group.name }}</h1>
+    {% if resource_group.description %}<p>{{ resource_group.description }}</p>{% endif %}
+    <div class="resource-group-summary">
+      <div class="resource-group-stat">
+        <span class="resource-group-kicker">Resources</span>
+        <strong>{{ resource_group.resources|length }}</strong>
+      </div>
+      <div class="resource-group-stat">
+        <span class="resource-group-kicker">Grants</span>
+        <strong>{{ resource_group.grants|length }}</strong>
+      </div>
+      <div class="resource-group-stat">
+        <span class="resource-group-kicker">Built-in types</span>
+        <strong>3</strong>
+      </div>
+    </div>
+    <form action="{{ request.path }}" method="post">
+      <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+      <button class="resource-group-button danger" type="submit" name="delete_resource_group" value="1">Delete resource group</button>
+    </form>
+  </section>
+
+  <section class="resource-group-grid two">
+    <article class="resource-group-card">
+      <h2>Add resource</h2>
+      <form action="{{ request.path }}" method="post" class="resource-group-form">
+        <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+        <label>Resource type
+          <select class="resource-group-select" name="resource_type">
+            <option value="table">table</option>
+            <option value="database">database</option>
+            <option value="query">query</option>
+          </select>
+        </label>
+        <label>Resource key
+          <input class="resource-group-input" type="text" name="resource_key" placeholder="db/t">
+        </label>
+        <label>Note
+          <textarea class="resource-group-textarea" name="note" placeholder="Optional note"></textarea>
+        </label>
+        <div><button class="resource-group-button" type="submit">Add resource</button></div>
+      </form>
+    </article>
+
+    <article class="resource-group-card">
+      <h2>Add grant</h2>
+      <form action="{{ request.path }}" method="post" class="resource-group-form">
+        <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+        <label>Subject type
+          <select class="resource-group-select" name="subject_type">
+            <option value="actor">actor</option>
+            <option value="group">group</option>
+          </select>
+        </label>
+        <label>Subject
+          {% if valid_actors %}
+            <select class="resource-group-select" name="subject">
+              {% for actor_id, actor_display in valid_actors %}
+                <option value="{{ actor_id }}">{{ actor_display }}</option>
+              {% endfor %}
+              {% for group in groups %}
+                <option value="{{ group }}">{{ group }}</option>
+              {% endfor %}
+            </select>
+          {% else %}
+            <input class="resource-group-input" type="text" name="subject" placeholder="alice or staff">
+          {% endif %}
+        </label>
+        <label>Grant mode
+          <select class="resource-group-select" name="grant_mode">
+            <option value="role">role</option>
+            <option value="action">action</option>
+          </select>
+        </label>
+        <label>Role
+          <select class="resource-group-select" name="role_name">
+            {% for role in role_bundles %}
+              <option value="{{ role }}">{{ role }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Action
+          <select class="resource-group-select" name="action_name">
+            {% for action in actions %}
+              <option value="{{ action }}">{{ action }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Expires at
+          <input class="resource-group-input" type="text" name="expires_at" placeholder="YYYY-MM-DD HH:MM:SS">
+        </label>
+        <div><button class="resource-group-button" type="submit">Add grant</button></div>
+      </form>
+    </article>
+  </section>
+
+  <section class="resource-group-card">
+    <h2>Resources</h2>
+    <table class="resource-group-table">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Key</th>
+          <th>Note</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for resource in resource_group.resources %}
+          <tr>
+            <td>{{ resource.resource_type }}</td>
+            <td><code>{{ resource.resource_key }}</code></td>
+            <td>{{ resource.note or "" }}</td>
+            <td>
+              <form action="{{ request.path }}" method="post">
+                <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+                <button class="resource-group-button danger" type="submit" name="delete_resource_id" value="{{ resource.id }}">Remove</button>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4">No resources yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="resource-group-card">
+    <h2>Grants</h2>
+    <table class="resource-group-table">
+      <thead>
+        <tr>
+          <th>Actor</th>
+          <th>Group</th>
+          <th>Role</th>
+          <th>Action</th>
+          <th>Expires</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for grant in resource_group.grants %}
+          <tr>
+            <td>{{ grant.actor_id or "" }}</td>
+            <td>{{ grant.actor_group or "" }}</td>
+            <td>{{ grant.role_name or "" }}</td>
+            <td>{{ grant.action_name or "" }}</td>
+            <td>{{ grant.expires_at or "" }}</td>
+            <td>
+              <form action="{{ request.path }}" method="post">
+                <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+                <button class="resource-group-button danger" type="submit" name="delete_grant_id" value="{{ grant.id }}">Remove</button>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6">No grants yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endblock %}

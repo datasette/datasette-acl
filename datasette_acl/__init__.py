@@ -225,11 +225,17 @@ def permission_resources_sql(datasette, actor, action):
             await update_dynamic_groups(
                 datasette, actor, skip_cache=hasattr(sys, "_pytest_running")
             )
-        # General-access (wildcard) principals always apply:
+        # General-access (wildcard) principals are stored with
+        # principal_type = 'public':
         #   '*'          -> anyone, including anonymous
         #   '_signed_in' -> any actor that has an id (only when signed in)
         #   '_anonymous' -> only unauthenticated callers (no actor id)
         # Direct actor grants and group grants only apply when signed in.
+        # Every branch is constrained by principal_type, so a signed-in caller
+        # whose actor id is literally '_anonymous' matches only rows stored as
+        # ('actor', '_anonymous') -- never the anonymous wildcard. Before
+        # principal_type, the direct-grant branch matched wildcard rows by bare
+        # string comparison and leaked '_anonymous' grants to such a caller.
         # NOTE: this must be a single SELECT statement with no leading CTE
         # (WITH ...). Datasette core inlines this SQL after a "UNION ALL" when
         # building its anon_rules block for include_is_private queries, and a
@@ -243,9 +249,9 @@ SELECT
     1 AS allow,
     'datasette-acl: ' || GROUP_CONCAT(
         CASE
-            WHEN a.actor_id IS NOT NULL
-                THEN 'actor:' || a.actor_id
-            ELSE 'group:' || g.name
+            WHEN a.principal_type = 'group'
+                THEN 'group:' || g.name
+            ELSE a.principal_type || ':' || a.actor_id
         END,
         ', '
     ) AS reason
@@ -256,18 +262,21 @@ LEFT JOIN acl_groups g ON a.group_id = g.id
 WHERE aa.name = :action
   AND ar.resource_type = :resource_type
   AND (
-    a.actor_id = '*'
-    OR (:actor_id IS NOT NULL AND a.actor_id = :actor_id)
-    OR (:actor_id IS NOT NULL AND a.actor_id = '_signed_in')
-    OR (:actor_id IS NULL AND a.actor_id = '_anonymous')
-    OR a.group_id IN (
+    (a.principal_type = 'public' AND a.actor_id = '*')
+    OR (:actor_id IS NOT NULL
+        AND a.principal_type = 'actor' AND a.actor_id = :actor_id)
+    OR (:actor_id IS NOT NULL
+        AND a.principal_type = 'public' AND a.actor_id = '_signed_in')
+    OR (:actor_id IS NULL
+        AND a.principal_type = 'public' AND a.actor_id = '_anonymous')
+    OR (a.principal_type = 'group' AND a.group_id IN (
         SELECT ag.group_id
         FROM acl_actor_groups ag
         JOIN acl_groups ig ON ag.group_id = ig.id
         WHERE :actor_id IS NOT NULL
           AND ag.actor_id = :actor_id
           AND ig.deleted IS NULL
-    )
+    ))
   )
   AND (a.group_id IS NULL OR g.deleted IS NULL)
 GROUP BY ar.parent, ar.child
@@ -335,8 +344,9 @@ def track_event(datasette, event):
         )
         await db.execute_write_many(
             """
-            INSERT INTO acl (actor_id, group_id, resource_id, action_id)
+            INSERT INTO acl (principal_type, actor_id, group_id, resource_id, action_id)
             VALUES (
+                'actor',
                 :actor_id,
                 null,
                 :resource_id,

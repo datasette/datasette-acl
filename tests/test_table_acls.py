@@ -551,60 +551,137 @@ async def test_fresh_acl_resources_schema():
     assert cols == ["id", "resource_type", "parent", "child"]
 
 
-@pytest.mark.asyncio
-async def test_acl_resources_migration():
+def test_acl_resources_migration():
     # Drive the migrations directly: apply everything up to m002 to get the OLD
     # (database, resource) acl_resources schema, insert rows, then run m002 and
     # assert the data migrates to (resource_type, parent, child), backfilling
-    # resource_type='table' and preserving id/parent/child values.
-    datasette = Datasette(memory=True)
-    db = datasette.get_internal_database()
-
-    await db.execute_write_fn(
-        lambda conn: internal_migrations.apply(
-            Database(conn), stop_before="m002_generalize_acl_resources"
-        )
-    )
+    # resource_type='table' and preserving id/parent/child values. Uses a plain
+    # sqlite_utils Database (not Datasette's internal db wrapper): the wrapper
+    # tracks schema changes and dispatches events, which requires a started-up
+    # Datasette, while this test exists precisely to drive the migrations
+    # outside the startup hook.
+    db = Database(memory=True)
+    internal_migrations.apply(db, stop_before="m002_generalize_acl_resources")
 
     # m001 created acl_resources with the old (database, resource) columns
-    cols_before = [
-        r["name"] for r in (await db.execute("PRAGMA table_info(acl_resources)"))
-    ]
+    cols_before = [r[1] for r in db.execute("PRAGMA table_info(acl_resources)")]
     assert cols_before == ["id", "database", "resource"]
 
-    await db.execute_write(
+    db.execute(
         "insert into acl_resources (database, resource) values (?, ?)", ["db1", "t1"]
     )
-    await db.execute_write(
+    db.execute(
         "insert into acl_resources (database, resource) values (?, ?)", ["db2", "t2"]
     )
 
-    # Apply the remaining migrations (m002)
-    await db.execute_write_fn(lambda conn: internal_migrations.apply(Database(conn)))
+    # Apply the remaining migrations (m002 onwards)
+    internal_migrations.apply(db)
 
-    cols_after = [
-        r["name"] for r in (await db.execute("PRAGMA table_info(acl_resources)"))
-    ]
+    cols_after = [r[1] for r in db.execute("PRAGMA table_info(acl_resources)")]
     assert cols_after == ["id", "resource_type", "parent", "child"]
 
-    rows = [
-        dict(r)
-        for r in (await db.execute("select * from acl_resources order by id"))
-    ]
+    rows = list(db["acl_resources"].rows)
     assert rows == [
         {"id": 1, "resource_type": "table", "parent": "db1", "child": "t1"},
         {"id": 2, "resource_type": "table", "parent": "db2", "child": "t2"},
     ]
     # The leftover scratch table must be gone.
-    assert "acl_resources_old" not in await db.table_names()
+    assert "acl_resources_old" not in db.table_names()
 
     # Re-applying is idempotent: no error, no duplicate rows.
-    await db.execute_write_fn(lambda conn: internal_migrations.apply(Database(conn)))
-    rows_again = [
-        dict(r)
-        for r in (await db.execute("select * from acl_resources order by id"))
-    ]
+    internal_migrations.apply(db)
+    rows_again = list(db["acl_resources"].rows)
     assert rows_again == rows
+
+
+def test_principal_type_migration():
+    # Apply up to (not including) m003 to get the old acl shape, insert
+    # old-shape rows -- a wildcard actor, a real actor, a group grant and an
+    # exact duplicate pair (possible before m003 because the old UNIQUE
+    # constraint never fired across NULLs) -- plus audit rows, then run m003.
+    db = Database(memory=True)
+    internal_migrations.apply(db, stop_before="m003_principal_type")
+
+    cols_before = [r[1] for r in db.execute("PRAGMA table_info(acl)")]
+    assert "principal_type" not in cols_before
+
+    db.execute("insert into acl_resources (resource_type, parent) values ('doc', '42')")
+    db.execute("insert into acl_actions (name) values ('doc-view')")
+    db.execute("insert into acl_groups (name) values ('staff')")
+    insert = "insert into acl (actor_id, group_id, resource_id, action_id) values (?, ?, 1, 1)"
+    db.execute(insert, ["_signed_in", None])  # (a) wildcard actor row
+    db.execute(insert, ["alice", None])  # (b) real-actor row
+    db.execute(insert, [None, 1])  # (c) group row
+    db.execute(insert, ["alice", None])  # (d) exact duplicate of (b)
+    db.execute(
+        """
+        insert into acl_audit (operation, actor_id, group_id, resource_id, action_id)
+        values ('added', '_signed_in', null, 1, 1),
+               ('added', 'alice', null, 1, 1),
+               ('added', null, 1, 1, 1)
+        """
+    )
+
+    internal_migrations.apply(db)
+
+    rows = list(
+        db.query(
+            "select acl_id, principal_type, actor_id, group_id from acl order by acl_id"
+        )
+    )
+    # Types backfilled, the duplicate pair collapsed to one row, ids preserved
+    # (min(acl_id) per surviving group).
+    assert rows == [
+        {"acl_id": 1, "principal_type": "public", "actor_id": "_signed_in", "group_id": None},
+        {"acl_id": 2, "principal_type": "actor", "actor_id": "alice", "group_id": None},
+        {"acl_id": 3, "principal_type": "group", "actor_id": None, "group_id": 1},
+    ]
+    assert "acl_old" not in db.table_names()
+
+    # Audit history backfilled with the same classification.
+    audit = list(
+        db.query("select principal_type, actor_id, group_id from acl_audit order by id")
+    )
+    assert audit == [
+        {"principal_type": "public", "actor_id": "_signed_in", "group_id": None},
+        {"principal_type": "actor", "actor_id": "alice", "group_id": None},
+        {"principal_type": "group", "actor_id": None, "group_id": 1},
+    ]
+
+    # The new partial unique indexes actually dedupe: INSERT OR IGNORE of an
+    # existing (principal_type, actor_id, resource, action) is a no-op.
+    db.execute(
+        "insert or ignore into acl (principal_type, actor_id, group_id, resource_id, action_id) "
+        "values ('actor', 'alice', null, 1, 1)"
+    )
+    assert db.execute("select count(*) from acl").fetchone()[0] == 3
+    # ...while ('public', '_signed_in') and ('actor', '_signed_in') coexist as
+    # distinct rows -- the disambiguation this migration exists for.
+    db.execute(
+        "insert or ignore into acl (principal_type, actor_id, group_id, resource_id, action_id) "
+        "values ('actor', '_signed_in', null, 1, 1)"
+    )
+    assert db.execute("select count(*) from acl").fetchone()[0] == 4
+
+    # CHECK constraints reject malformed shapes at the SQL layer.
+    import sqlite3
+
+    for bad in (
+        ("public", "bob", None),  # public with a non-wildcard id
+        ("actor", "carol", 1),  # actor with a group_id
+        ("group", "carol", None),  # group with an actor_id
+        ("alien", "dave", None),  # unknown principal_type
+    ):
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(
+                "insert into acl (principal_type, actor_id, group_id, resource_id, action_id) "
+                "values (?, ?, ?, 1, 1)",
+                list(bad),
+            )
+
+    # Re-applying is idempotent.
+    internal_migrations.apply(db)
+    assert db.execute("select count(*) from acl").fetchone()[0] == 4
 
 
 @pytest.mark.asyncio

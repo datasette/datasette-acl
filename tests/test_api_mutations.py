@@ -230,6 +230,67 @@ async def test_grant_wildcard_principal(api_ds):
 
 
 @pytest.mark.asyncio
+async def test_grant_wildcard_without_principal_type_stores_public(api_ds):
+    # Back-compat: a body with just {"actor_id": "*"} (no principal_type, the
+    # pre-principal_type client contract) stores a 'public' row and the
+    # response kind is unchanged.
+    response = await _post(
+        api_ds,
+        GRANT_URL,
+        json={"actor_id": "*", "role": "Viewer"},
+        cookies=_root_cookie(api_ds),
+    )
+    assert response.status_code == 200
+    assert response.json()["grant"]["kind"] == "public"
+    rows = [
+        dict(r)
+        for r in (
+            await api_ds.get_internal_database().execute(
+                "select principal_type, actor_id from acl"
+            )
+        ).rows
+    ]
+    assert rows == [{"principal_type": "public", "actor_id": "*"}]
+
+
+@pytest.mark.asyncio
+async def test_grant_explicit_principal_type_actor(api_ds):
+    # principal_type: "actor" pins a wildcard-named id to a real user: the
+    # stored row is 'actor' and the response kind is user, not public.
+    response = await _post(
+        api_ds,
+        GRANT_URL,
+        json={"actor_id": "_signed_in", "role": "Viewer", "principal_type": "actor"},
+        cookies=_root_cookie(api_ds),
+    )
+    assert response.status_code == 200
+    assert response.json()["grant"]["kind"] == "user"
+    rows = [
+        dict(r)
+        for r in (
+            await api_ds.get_internal_database().execute(
+                "select principal_type, actor_id from acl"
+            )
+        ).rows
+    ]
+    assert rows == [{"principal_type": "actor", "actor_id": "_signed_in"}]
+
+
+@pytest.mark.asyncio
+async def test_grant_invalid_principal_type_is_400(api_ds):
+    for body in (
+        {"actor_id": "bob", "role": "Viewer", "principal_type": "public"},
+        {"actor_id": "bob", "role": "Viewer", "principal_type": "group"},
+        {"actor_id": "bob", "role": "Viewer", "principal_type": "alien"},
+    ):
+        response = await _post(
+            api_ds, GRANT_URL, json=body, cookies=_root_cookie(api_ds)
+        )
+        assert response.status_code == 400, body
+        assert response.json()["ok"] is False
+
+
+@pytest.mark.asyncio
 async def test_update_swaps_role(api_ds):
     await grant(api_ds, "mock-doc", "42", actor_id="bob", role="Manager", by_actor="root")
     response = await _post(

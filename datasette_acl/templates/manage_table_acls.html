@@ -123,7 +123,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <td>{{ entry.operation_by }}</td>
         <td>{{ entry.operation }}</td>
         <td>{{ entry.group_name or '' }}</td>
-        <td>{{ entry.actor_id or '' }}</td>
+        <td>{% if entry.principal_type == 'public' %}<code>{{ entry.actor_id }}</code> (general access){% else %}{{ entry.actor_id or '' }}{% endif %}</td>
         <td>{{ entry.action_name }}</td>
       </tr>
     {% endfor %}

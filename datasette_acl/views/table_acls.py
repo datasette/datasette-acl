@@ -50,6 +50,7 @@ async def manage_table_acls(request, datasette):
     acl_rows = await internal_db.execute(
         """
         select
+          acl.principal_type,
           acl_groups.name as group_name,
           acl.actor_id,
           acl_actions.name as action_name
@@ -61,15 +62,17 @@ async def manage_table_acls(request, datasette):
         [resource_id],
     )
     for row in acl_rows.rows:
-        group_name = row["group_name"]
-        actor_id = row["actor_id"]
         action_name = row["action_name"]
-        if group_name:
-            current_group_permissions.setdefault(group_name, {})[action_name] = True
-            current_group_permissions[group_name][action_name] = True
-        else:
-            assert actor_id
-            current_user_permissions.setdefault(actor_id, {})[action_name] = True
+        if row["principal_type"] == "group":
+            current_group_permissions.setdefault(row["group_name"], {})[
+                action_name
+            ] = True
+        elif row["principal_type"] == "actor":
+            current_user_permissions.setdefault(row["actor_id"], {})[
+                action_name
+            ] = True
+        # The legacy table page has no General-access section: 'public' rows
+        # (managed on the generic resource page) are not rendered as users.
 
     if request.method == "POST":
         group_changes_made = {"added": [], "removed": []}
@@ -91,8 +94,9 @@ async def manage_table_acls(request, datasette):
                         # They added it, add the record
                         await internal_db.execute_write(
                             """
-                            INSERT INTO acl (actor_id, group_id, resource_id, action_id)
+                            INSERT INTO acl (principal_type, actor_id, group_id, resource_id, action_id)
                             VALUES (
+                                'group',
                                 null,
                                 (SELECT id FROM acl_groups WHERE name = :group_name),
                                 :resource_id,
@@ -129,6 +133,7 @@ async def manage_table_acls(request, datasette):
                         """
                         insert into acl_audit (
                             operation,
+                            principal_type,
                             actor_id,
                             group_id,
                             resource_id,
@@ -136,6 +141,7 @@ async def manage_table_acls(request, datasette):
                             operation_by
                         ) values (
                             :operation,
+                            'group',
                             null,
                             (SELECT id FROM acl_groups WHERE name = :group_name),
                             :resource_id,
@@ -176,11 +182,13 @@ async def manage_table_acls(request, datasette):
                 )
                 if new_value != current_value:
                     if new_value:
-                        # They added the permission
+                        # They added the permission. The legacy table page only
+                        # manages real users, so the row is always 'actor'.
                         await internal_db.execute_write(
                             """
-                            insert into acl (actor_id, group_id, resource_id, action_id)
+                            insert into acl (principal_type, actor_id, group_id, resource_id, action_id)
                             values (
+                                'actor',
                                 :actor_id,
                                 null,
                                 :resource_id,
@@ -196,12 +204,14 @@ async def manage_table_acls(request, datasette):
                         operation = "added"
                         user_changes_made["added"].append((actor_id, action_name))
                     else:
-                        # They removed the permission
+                        # They removed the permission. Constrained to 'actor'
+                        # rows so a wildcard grant with a colliding id is never
+                        # deleted from here.
                         await internal_db.execute_write(
                             """
                             delete from acl where
-                                actor_id = :actor_id
-                                and group_id is null
+                                principal_type = 'actor'
+                                and actor_id = :actor_id
                                 and resource_id = :resource_id
                                 and action_id = (select id from acl_actions where name = :action_name)
                             """,
@@ -217,6 +227,7 @@ async def manage_table_acls(request, datasette):
                         """
                         insert into acl_audit (
                             operation,
+                            principal_type,
                             actor_id,
                             group_id,
                             resource_id,
@@ -224,6 +235,7 @@ async def manage_table_acls(request, datasette):
                             operation_by
                         ) values (
                             :operation,
+                            'actor',
                             :actor_id,
                             null,
                             :resource_id,
@@ -256,6 +268,7 @@ async def manage_table_acls(request, datasette):
             acl_audit.timestamp,
             acl_audit.operation_by,
             acl_audit.operation,
+            acl_audit.principal_type,
             acl_audit.actor_id,
             acl_groups.name as group_name,
             acl_actions.name as action_name

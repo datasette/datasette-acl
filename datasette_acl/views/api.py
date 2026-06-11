@@ -43,10 +43,15 @@ import json
 
 from datasette import Response, Forbidden
 
-from datasette_acl.grants import grant, revoke, update_role, list_grants
+from datasette_acl.grants import (
+    grant,
+    revoke,
+    update_role,
+    list_grants,
+    principal_type_for,
+)
 from datasette_acl.roles import role_for_actions, roles_for
 from datasette_acl.utils import (
-    PUBLIC_PRINCIPALS,
     build_resource,
     can_manage,
     resource_class_for,
@@ -85,13 +90,15 @@ async def _ensure_can_manage(datasette, request, resource_type, parent, child=No
         raise Forbidden("Cannot manage sharing for this resource")
 
 
-def _kind_for(actor_id, enriched):
+def _kind_for(principal, enriched):
     """Resolve the ``kind`` for an actor-principal grant.
 
-    Wildcard principals are ``public``. Otherwise prefer a ``kind`` supplied by
-    the actor-resolution layer (profiles / agents); default to ``user``.
+    ``principal`` is the stored principal type (``"actor"`` / ``"public"``) --
+    no string inference. Public principals are ``public``. Otherwise prefer a
+    ``kind`` supplied by the actor-resolution layer (profiles / agents);
+    default to ``user``.
     """
-    if actor_id in PUBLIC_PRINCIPALS:
+    if principal == "public":
         return "public"
     if enriched and enriched.get("kind"):
         return enriched["kind"]
@@ -123,19 +130,22 @@ async def _group_info(datasette, group_ids):
     }
 
 
-def _actor_entry(actor_id, role, actions, info):
+def _actor_entry(actor_id, role, actions, info, principal="actor"):
     """Assemble an actor grant entry from an already-resolved role + actor info.
 
     Pure shape-builder shared by the batched GET loop and the per-principal
     mutation helper, so both produce the identical entry shape. ``info`` is the
     actor's ``actors_from_ids`` record (``{}`` for wildcard / unknown actors).
+    ``principal`` is the stored principal type (``"actor"`` / ``"public"``);
+    the entry's own ``principal`` field stays ``"actor"`` either way (the
+    client contract distinguishes wildcards via ``kind: "public"``).
     """
     entry = {
         "principal": "actor",
         "id": actor_id,
         "role": role.name if role else None,
         "actions": sorted(actions),
-        "kind": _kind_for(actor_id, info),
+        "kind": _kind_for(principal, info),
     }
     for key in ("display_name", "email", "avatar_url"):
         if info.get(key):
@@ -162,17 +172,20 @@ def _group_entry(group_id, role, actions, info, fallback_name=None):
     }
 
 
-async def _actor_grant_entry(datasette, roles, actor_id, actions):
+async def _actor_grant_entry(datasette, roles, actor_id, actions, principal):
     """Build the enriched API entry for one actor-principal grant.
 
     Resolves the granted action-set to its best role, enriches via core
-    ``actors_from_ids`` (skipped for wildcard principals), and tags ``kind``.
+    ``actors_from_ids`` (skipped for public principals, which are not real
+    actors), and tags ``kind``. ``principal`` is the stored principal type.
     """
     role = role_for_actions(roles, set(actions))
     enriched = {}
-    if actor_id not in PUBLIC_PRINCIPALS:
+    if principal == "actor":
         enriched = (await datasette.actors_from_ids([actor_id])) or {}
-    return _actor_entry(actor_id, role, actions, enriched.get(actor_id) or {})
+    return _actor_entry(
+        actor_id, role, actions, enriched.get(actor_id) or {}, principal=principal
+    )
 
 
 async def _group_grant_entry(datasette, roles, group_id, actions):
@@ -183,17 +196,22 @@ async def _group_grant_entry(datasette, roles, group_id, actions):
 
 
 def _principal_from_body(body):
-    """Extract ``(actor_id, group_id)`` from a request body, enforcing exactly one.
+    """Extract ``(actor_id, group_id, principal_type)`` from a request body.
 
-    Returns ``(actor_id, group_id)`` with exactly one non-None. Raises
-    ``ValueError`` if neither or both are supplied (mirrors the acl CHECK
-    invariant) so handlers can translate it to a 400.
+    Exactly one of ``actor_id`` / ``group_id`` must be supplied.
+    ``principal_type`` is optional (``"actor"`` / ``"public"``) and
+    disambiguates a wildcard-named actor id; when absent the grant helpers
+    infer it, preserving the existing ``{"actor_id": "*"}`` client contract.
+    Raises ``ValueError`` for invalid combinations (via
+    :func:`principal_type_for`) so handlers can translate it to a 400.
     """
     actor_id = body.get("actor_id")
     group_id = body.get("group_id")
-    if (actor_id is None) == (group_id is None):
-        raise ValueError("Provide exactly one of actor_id or group_id")
-    return actor_id, group_id
+    principal_type = body.get("principal_type")
+    # Validates the combination eagerly (exactly-one principal, public ids
+    # against the wildcard whitelist, no 'group' alongside actor_id).
+    principal_type_for(actor_id, group_id, principal_type)
+    return actor_id, group_id, principal_type
 
 
 def _parse_json_body(request_body):
@@ -209,10 +227,15 @@ def _parse_json_body(request_body):
     return data
 
 
-async def _enriched_grant(datasette, roles, actor_id, group_id, actions):
+async def _enriched_grant(
+    datasette, roles, actor_id, group_id, actions, principal_type=None
+):
     """Build the enriched grant entry for whichever principal was supplied."""
     if actor_id is not None:
-        return await _actor_grant_entry(datasette, roles, actor_id, actions)
+        principal = principal_type_for(actor_id, None, principal_type)
+        return await _actor_grant_entry(
+            datasette, roles, actor_id, actions, principal
+        )
     return await _group_grant_entry(datasette, roles, group_id, actions)
 
 
@@ -245,13 +268,9 @@ async def resource_grants_json(request, datasette):
     roles = roles_for(datasette, resource_type)
     raw_grants = await list_grants(datasette, resource_type, parent, child)
 
-    # Enrich actor grants in one batch via core actors_from_ids. Wildcard
-    # principals are not real actors; we never look them up.
-    actor_ids = [
-        g["actor_id"]
-        for g in raw_grants
-        if g["principal"] == "actor" and g["actor_id"] not in PUBLIC_PRINCIPALS
-    ]
+    # Enrich actor grants in one batch via core actors_from_ids. Public
+    # (wildcard) principals are not real actors; we never look them up.
+    actor_ids = [g["actor_id"] for g in raw_grants if g["principal"] == "actor"]
     enriched = {}
     if actor_ids:
         enriched = await datasette.actors_from_ids(actor_ids) or {}
@@ -262,12 +281,7 @@ async def resource_grants_json(request, datasette):
     grants = []
     for g in raw_grants:
         role = role_for_actions(roles, set(g["actions"]))
-        if g["principal"] == "actor":
-            actor_id = g["actor_id"]
-            grants.append(
-                _actor_entry(actor_id, role, g["actions"], enriched.get(actor_id) or {})
-            )
-        else:
+        if g["principal"] == "group":
             info = group_info.get(g["group_id"], {})
             grants.append(
                 _group_entry(
@@ -276,6 +290,17 @@ async def resource_grants_json(request, datasette):
                     g["actions"],
                     info,
                     fallback_name=g["group_name"],
+                )
+            )
+        else:
+            actor_id = g["actor_id"]
+            grants.append(
+                _actor_entry(
+                    actor_id,
+                    role,
+                    g["actions"],
+                    enriched.get(actor_id) or {},
+                    principal=g["principal"],
                 )
             )
 
@@ -339,14 +364,16 @@ async def _begin_mutation(request, datasette):
 async def grant_json(request, datasette):
     """POST /-/acl/api/resource/{type}/{parent}/{child}/grant.
 
-    Body: ``{actor_id|group_id, role}`` or ``{actor_id|group_id, actions: [...]}``.
+    Body: ``{actor_id|group_id, role}`` or ``{actor_id|group_id, actions: [...]}``,
+    plus optional ``principal_type: "actor"|"public"`` to disambiguate a
+    wildcard-named actor id (absent -> inferred).
     Upserts the grant (idempotent), audits, and returns the enriched grant.
     """
     try:
         resource_type, parent, child, roles, body = await _begin_mutation(
             request, datasette
         )
-        actor_id, group_id = _principal_from_body(body)
+        actor_id, group_id, principal_type = _principal_from_body(body)
         by_actor = (request.actor or {}).get("id")
         actions = await grant(
             datasette,
@@ -358,12 +385,15 @@ async def grant_json(request, datasette):
             role=body.get("role"),
             actions=body.get("actions"),
             by_actor=by_actor,
+            principal_type=principal_type if actor_id is not None else None,
         )
     except _ApiError as exc:
         return _error_response(exc)
     except ValueError as exc:
         return _error_response(_ApiError(400, str(exc)))
-    entry = await _enriched_grant(datasette, roles, actor_id, group_id, actions)
+    entry = await _enriched_grant(
+        datasette, roles, actor_id, group_id, actions, principal_type
+    )
     return Response.json({"ok": True, "grant": entry})
 
 
@@ -522,14 +552,15 @@ async def actors_json(request, datasette):
 async def revoke_json(request, datasette):
     """POST /-/acl/api/resource/{type}/{parent}/{child}/revoke.
 
-    Body: ``{actor_id}`` or ``{group_id}``. Deletes all acl rows for that
-    principal on this resource, audits each removal, returns ``{ok: true}``.
+    Body: ``{actor_id}`` or ``{group_id}``, plus optional ``principal_type``.
+    Deletes all acl rows for that principal on this resource, audits each
+    removal, returns ``{ok: true}``.
     """
     try:
         resource_type, parent, child, roles, body = await _begin_mutation(
             request, datasette
         )
-        actor_id, group_id = _principal_from_body(body)
+        actor_id, group_id, principal_type = _principal_from_body(body)
         by_actor = (request.actor or {}).get("id")
         removed = await revoke(
             datasette,
@@ -539,6 +570,7 @@ async def revoke_json(request, datasette):
             actor_id=actor_id,
             group_id=group_id,
             by_actor=by_actor,
+            principal_type=principal_type if actor_id is not None else None,
         )
     except _ApiError as exc:
         return _error_response(exc)
@@ -550,14 +582,15 @@ async def revoke_json(request, datasette):
 async def update_json(request, datasette):
     """POST /-/acl/api/resource/{type}/{parent}/{child}/update.
 
-    Body: ``{actor_id|group_id, role}``. Atomically swaps the principal's action
-    set to the new role, audits each change, and returns the enriched grant.
+    Body: ``{actor_id|group_id, role}``, plus optional ``principal_type``.
+    Atomically swaps the principal's action set to the new role, audits each
+    change, and returns the enriched grant.
     """
     try:
         resource_type, parent, child, roles, body = await _begin_mutation(
             request, datasette
         )
-        actor_id, group_id = _principal_from_body(body)
+        actor_id, group_id, principal_type = _principal_from_body(body)
         role = body.get("role")
         if not role:
             raise _ApiError(400, "update requires a role")
@@ -571,10 +604,13 @@ async def update_json(request, datasette):
             group_id=group_id,
             role=role,
             by_actor=by_actor,
+            principal_type=principal_type if actor_id is not None else None,
         )
     except _ApiError as exc:
         return _error_response(exc)
     except ValueError as exc:
         return _error_response(_ApiError(400, str(exc)))
-    entry = await _enriched_grant(datasette, roles, actor_id, group_id, actions)
+    entry = await _enriched_grant(
+        datasette, roles, actor_id, group_id, actions, principal_type
+    )
     return Response.json({"ok": True, "grant": entry})

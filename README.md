@@ -46,15 +46,15 @@ from datasette import hookimpl
 from datasette.permissions import Action, Resource
 
 
-class PaperDoc(Resource):
-    name = "paper-doc"
+class Playlist(Resource):
+    name = "playlist"
 
 
 @hookimpl
 def register_actions(datasette):
     return [
-        Action(name="paper-view", description="View a doc", resource_class=PaperDoc),
-        Action(name="paper-edit", description="Edit a doc", resource_class=PaperDoc),
+        Action(name="playlist-view", description="View a playlist", resource_class=Playlist),
+        Action(name="playlist-edit", description="Edit a playlist", resource_class=Playlist),
     ]
 ```
 
@@ -66,9 +66,61 @@ A generic admin page for any resource type lives at:
 /-/acl/resource/<resource-type>/<parent>/<child>
 ```
 
-For example `/-/acl/resource/paper-doc/workspace-1/doc-42`. The `<child>` segment is optional for parent-only resource types (`/-/acl/resource/<resource-type>/<parent>`). The page presents the same group/user grant interface and audit log as the table page, with checkboxes for exactly the actions registered for that resource type. Access to this admin page is gated on the `datasette-acl` permission described below.
+For example `/-/acl/resource/playlist/workspace-1/playlist-42`. The `<child>` segment is optional for parent-only resource types (`/-/acl/resource/<resource-type>/<parent>`). The page presents the same group/user grant interface and audit log as the table page, with checkboxes for exactly the actions registered for that resource type. Access to this admin page is gated on the `datasette-acl` permission described below.
 
-Grants made here flow through Datasette's permission system: once granted, `await datasette.allowed(actor=..., action="paper-edit", resource=PaperDoc("workspace-1", "doc-42"))` returns `True`.
+Grants made here flow through Datasette's permission system: once granted, `await datasette.allowed(actor=..., action="playlist-edit", resource=Playlist("workspace-1", "playlist-42"))` returns `True`.
+
+### Declaring roles
+
+Raw action grants are flexible but users think in roles. A plugin can declare friendly roles for its resource type with the `datasette_acl_roles` hook, mapping each role name to the bundle of actions it grants. Almost every plugin wants the same three cumulative roles - Viewer, Editor and Manager - so rather than declaring them by hand, use the `standard_roles()` factory.
+
+A complete plugin declares its `Resource` subclass, registers an `Action` for each action name, then maps those same names to roles. Define the names once as constants so the two hooks can't drift apart:
+
+```python
+from datasette import hookimpl
+from datasette.permissions import Action, Resource
+from datasette_acl.roles import standard_roles
+
+VIEW = "playlist-view"
+EDIT = "playlist-edit"
+MANAGE = "playlist-manage"
+
+
+class Playlist(Resource):
+    name = "playlist"
+
+
+@hookimpl
+def register_actions(datasette):
+    return [
+        Action(name=VIEW, description="View a playlist", resource_class=Playlist),
+        Action(name=EDIT, description="Edit a playlist", resource_class=Playlist),
+        Action(name=MANAGE, description="Manage playlist sharing", resource_class=Playlist),
+    ]
+
+
+@hookimpl
+def datasette_acl_roles(datasette):
+    return standard_roles(
+        Playlist.name,
+        view=VIEW,
+        edit=EDIT,
+        manage=MANAGE,
+    )
+```
+
+This returns the canonical triple: **Viewer** (the `view` actions), **Editor** (`view` + `edit`) and **Manager** (`view` + `edit` + `manage`, marked as authorizing re-sharing). Each of `view=`/`edit=`/`manage=` accepts a single action name or a list:
+
+```python
+standard_roles(
+    "table",
+    view="view-table",
+    edit=["insert-row", "update-row", "delete-row"],
+    manage="manage-table",
+)
+```
+
+Role names then work everywhere roles are accepted: the `role=` argument to the Python `grant()`/`update_role()` helpers below, and the JSON API. If you need different role names or additional roles, construct `datasette_acl.roles.AclRole` objects directly (or append them to the list returned by `standard_roles()`) - each declares a `resource_type`, `name`, `actions` list, a `rank` for ordering, and `manage=True` on the role whose exclusive actions allow changing sharing.
 
 ### Controlling who can edit permissions
 

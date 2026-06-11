@@ -13,6 +13,7 @@ from datasette_acl.roles import (
     actions_for_role,
     manage_actions,
     manage_only_actions,
+    standard_roles,
 )
 import pytest
 import pytest_asyncio
@@ -144,3 +145,39 @@ def test_manage_only_actions_empty_when_no_manage_role():
         AclRole("mock-doc", "Editor", ["doc-view", "doc-edit"], rank=2),
     ]
     assert manage_only_actions(roles) == set()
+
+
+def test_standard_roles_builds_canonical_triple():
+    roles = standard_roles(
+        "doc", view="doc-view", edit="doc-edit", manage="doc-manage"
+    )
+    assert [(r.name, r.rank, r.manage) for r in roles] == [
+        ("Viewer", 1, False),
+        ("Editor", 2, False),
+        ("Manager", 3, True),
+    ]
+    assert all(r.resource_type == "doc" for r in roles)
+    # Bundles are cumulative
+    assert roles[0].actions == ["doc-view"]
+    assert roles[1].actions == ["doc-view", "doc-edit"]
+    assert roles[2].actions == ["doc-view", "doc-edit", "doc-manage"]
+    # The triple plugs into the existing resolution helpers
+    assert role_for_actions(roles, {"doc-view", "doc-edit"}).name == "Editor"
+    assert manage_only_actions(roles) == {"doc-manage"}
+
+
+def test_standard_roles_accepts_lists_and_dedupes():
+    roles = standard_roles(
+        "table",
+        view=["view-table"],
+        edit=["insert-row", "update-row", "delete-row", "view-table"],
+        manage="manage-table",
+    )
+    # The duplicate view-table in the edit bundle is not repeated
+    assert roles[1].actions == [
+        "view-table",
+        "insert-row",
+        "update-row",
+        "delete-row",
+    ]
+    assert roles[2].actions == roles[1].actions + ["manage-table"]

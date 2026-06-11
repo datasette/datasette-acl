@@ -27,7 +27,7 @@ async def can_manage(datasette, actor, resource_type, parent, child=None):
         (which only have raw actions, no roles) still work.
 
     The manage check authorizes against :func:`manage_only_actions` (the action
-    exclusive to manage roles, e.g. ``paper-manage``) rather than the full
+    exclusive to manage roles, e.g. ``playlist-manage``) rather than the full
     Manager action bundle — otherwise any Viewer/Editor, who also holds
     ``*-view``, would pass. The global ``datasette-acl`` admin always wins.
 

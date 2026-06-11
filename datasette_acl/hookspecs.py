@@ -27,4 +27,8 @@ def datasette_acl_roles(datasette):
     authorize re-sharing the resource.
 
     May return a list directly, or a function / awaitable returning one.
+
+    For the common Viewer/Editor/Manager triple, use
+    ``datasette_acl.roles.standard_roles()`` instead of declaring each
+    AclRole by hand.
     """

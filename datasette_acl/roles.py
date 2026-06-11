@@ -24,9 +24,9 @@ class AclRole:
     """A friendly role mapping a name to an action bundle for one resource type.
 
     Attributes:
-        resource_type: the Resource.name this role applies to, e.g. "paper-doc".
+        resource_type: the Resource.name this role applies to, e.g. "playlist".
         name: friendly role name, e.g. "Editor".
-        actions: action names this role grants, e.g. ["paper-view", "paper-edit"].
+        actions: action names this role grants, e.g. ["playlist-view", "playlist-edit"].
         rank: ordering / "highest role wins" weight; larger means higher.
         manage: True => holders of this role may change sharing (Manager/Owner).
         description: optional human-readable description.
@@ -38,6 +38,74 @@ class AclRole:
     rank: int = 0
     manage: bool = False
     description: str = ""
+
+
+def standard_roles(
+    resource_type: str,
+    *,
+    view,
+    edit,
+    manage,
+) -> List[AclRole]:
+    """Build the canonical Viewer / Editor / Manager role triple.
+
+    Most plugins want the same three cumulative roles: Viewer (can view),
+    Editor (view + edit) and Manager (view + edit + manage sharing). This
+    factory saves each plugin from re-declaring them by hand:
+
+        from datasette_acl.roles import standard_roles
+
+        @hookimpl
+        def datasette_acl_roles(datasette):
+            return standard_roles(
+                "playlist",
+                view="playlist-view",
+                edit="playlist-edit",
+                manage="playlist-manage",
+            )
+
+    Each of ``view``/``edit``/``manage`` accepts a single action name or a
+    list of them. Bundles are cumulative (Editor includes Viewer's actions,
+    Manager includes Editor's) and the Manager role carries ``manage=True``,
+    so the action(s) exclusive to it authorize re-sharing (see
+    :func:`manage_only_actions`). For different role names or extra roles,
+    adjust the returned list before returning it from the hook.
+    """
+
+    def as_list(value):
+        return [value] if isinstance(value, str) else list(value)
+
+    view_actions = as_list(view)
+    edit_actions = view_actions + [
+        a for a in as_list(edit) if a not in view_actions
+    ]
+    full_actions = edit_actions + [
+        a for a in as_list(manage) if a not in edit_actions
+    ]
+    return [
+        AclRole(
+            resource_type,
+            "Viewer",
+            view_actions,
+            rank=1,
+            description="Can view",
+        ),
+        AclRole(
+            resource_type,
+            "Editor",
+            edit_actions,
+            rank=2,
+            description="Can view and edit",
+        ),
+        AclRole(
+            resource_type,
+            "Manager",
+            full_actions,
+            rank=3,
+            manage=True,
+            description="Can view, edit and manage sharing",
+        ),
+    ]
 
 
 async def build_roles_registry(datasette) -> Dict[str, List[AclRole]]:

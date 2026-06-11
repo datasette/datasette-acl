@@ -231,8 +231,8 @@ async def test_create_delete_group(ds):
         },
     )
     assert "/groups/sales" not in table_page2.text
-    # But it should still be visible in the audit log
-    assert "<td>sales</td>" in table_page2.text
+    # But it should still be visible in the audit log's Principal column
+    assert "<td>sales (group)</td>" in table_page2.text
 
     # Check the audit log
     audit_rows = [

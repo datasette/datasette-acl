@@ -567,6 +567,9 @@ async def test_generic_resource_view_grants_public_via_post(widget_ds):
         cookies={"ds_actor": widget_ds.client.actor_cookie({"id": "root"})},
     )
     assert 'name="user_permissions_*"' not in page.text
+    # Audit history shows the friendly label, not the raw wildcard id
+    assert "Anyone (signed in or not) (general access)" in page.text
+    assert "<code>*</code>" not in page.text
 
 
 @pytest.mark.asyncio

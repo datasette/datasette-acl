@@ -1,6 +1,7 @@
 from datasette import Response, Forbidden
 from datasette.utils import MultiParams
 from datasette_acl.utils import (
+    PUBLIC_PRINCIPALS,
     actions_for_resource_type,
     can_edit_permissions,
     generate_changes_message,
@@ -313,6 +314,7 @@ async def manage_table_acls(request, datasette):
                 "group_sizes": group_sizes,
                 "group_permissions": current_group_permissions,
                 "user_permissions": current_user_permissions,
+                "public_principals": PUBLIC_PRINCIPALS,
                 "audit_log": audit_log.rows,
                 "valid_actors": await get_acl_valid_actors(datasette),
             },

@@ -69,9 +69,18 @@ classes of caller rather than a specific person:
 | `_signed_in`  | Any authenticated actor (has an `id`)         |
 | `_anonymous`  | Only unauthenticated callers                  |
 
-These are stored as ordinary actor grants but are flagged `"kind": "public"` in
-responses and are never run through actor enrichment (no display name / email /
-avatar).
+These are stored with an explicit `principal_type` of `public` (distinct from
+ordinary `actor` grants), are flagged `"kind": "public"` in responses, and are
+never run through actor enrichment (no display name / email / avatar).
+
+**`principal_type`** (optional body field, mutations only). When an `actor_id`
+is supplied, the stored principal type is normally inferred: a wildcard id is
+stored as `public`, anything else as `actor`. Pass
+`"principal_type": "actor"` to override the inference and grant to a real user
+whose id collides with a wildcard (e.g. a user literally named `_signed_in`),
+or `"principal_type": "public"` to assert the id must be a wildcard (a
+non-wildcard id is then a `400`). The two row shapes are independent: granting,
+updating or revoking one never affects the other.
 
 ### Roles vs. actions
 
@@ -300,6 +309,7 @@ principal's full action-set after the grant.
 | `group_id` | integer         | Supply this **or** `actor_id`, not both.             |
 | `role`     | string          | A role name for this resource type. Expands to its actions. Supply this **or** `actions`. |
 | `actions`  | array of string | Raw action names. Supply this **or** `role`.         |
+| `principal_type` | string    | Optional, with `actor_id` only: `"actor"` or `"public"` (see [Principals](#principals)). Absent → inferred. |
 
 ```json
 { "actor_id": "bob", "role": "Editor" }
@@ -351,6 +361,7 @@ audited. Returns the enriched grant.
 | `actor_id` | string  | Supply this **or** `group_id`.           |
 | `group_id` | integer | Supply this **or** `actor_id`.           |
 | `role`     | string  | Required. The role to swap the principal to. |
+| `principal_type` | string | Optional, with `actor_id` only: `"actor"` or `"public"`. Absent → inferred. |
 
 ```json
 { "actor_id": "bob", "role": "Viewer" }
@@ -382,6 +393,7 @@ Removes **all** grants for a principal on the resource. Each removal is audited
 | ---------- | ------- | ------------------------------ |
 | `actor_id` | string  | Supply this **or** `group_id`. |
 | `group_id` | integer | Supply this **or** `actor_id`. |
+| `principal_type` | string | Optional, with `actor_id` only: `"actor"` or `"public"`. Absent → inferred, so revoking `"*"` removes the wildcard grant, never a like-named user's. |
 
 ```json
 { "actor_id": "bob" }

@@ -70,6 +70,8 @@ For example `/-/acl/resource/playlist/workspace-1/playlist-42`. The `<child>` se
 
 The page also has a **General access** section for exposing a resource without naming individual users, using the wildcard principals: `*` grants an action to anyone (signed in or not), `_signed_in` to any authenticated actor, and `_anonymous` to signed-out visitors only.
 
+Every stored grant carries an explicit `principal_type` column — `actor`, `group` or `public` — so wildcard grants are distinguished from real users at the storage layer, not by string comparison. Permission checks match on `(principal_type, id)` pairs: a signed-in user whose id happens to be `_anonymous` can never inherit grants intended for signed-out visitors, and revoking a wildcard grant can never delete a like-named user's grant. Two things remain convention rather than enforcement: audit history rows written before the `principal_type` migration display wildcard-looking ids without knowing which they were, and any third-party code writing raw SQL into the `acl` table must now supply the `principal_type` column itself (use the [Python API](#python-api-for-managing-grants) instead).
+
 Grants made here flow through Datasette's permission system: once granted, `await datasette.allowed(actor=..., action="playlist-edit", resource=Playlist("workspace-1", "playlist-42"))` returns `True`.
 
 ### Declaring roles
@@ -225,6 +227,8 @@ def datasette_acl_valid_actors(datasette):
 
 Provide exactly one principal (`actor_id=` or `group_id=`), and for `grant()` exactly one of `role=` or `actions=`.
 
+An `actor_id` that is one of the wildcard principals (`*`, `_signed_in`, `_anonymous`) is stored as a `public` grant by default. Pass `principal_type="actor"` to `grant()`, `update_role()` or `revoke()` to override that inference and target a real user whose id collides with a wildcard; `principal_type="public"` asserts the id must be a wildcard (anything else raises `ValueError`).
+
 ```python
 from datasette_acl.grants import grant, revoke, update_role, list_grants
 ```
@@ -248,7 +252,7 @@ await update_role(datasette, "doc", "doc1", actor_id="alice", role="Viewer")
 await revoke(datasette, "table", "mydb", "mytable", actor_id="alice")
 ```
 
-`list_grants(...)` — list current grants on a resource as dicts (`{"principal", "actor_id", "group_id", "group_name", "actions"}`):
+`list_grants(...)` — list current grants on a resource as dicts (`{"principal", "actor_id", "group_id", "group_name", "actions"}`, where `principal` is `"actor"`, `"group"` or `"public"`):
 
 ```python
 grants = await list_grants(datasette, "table", "mydb", "mytable")

@@ -9,6 +9,17 @@ if TYPE_CHECKING:
     from datasette.permissions import Resource
 
 
+# Wildcard / "general access" principals. These are stored as actor_id values
+# in acl rows but represent classes of actor rather than a specific person --
+# the permission_resources_sql hook matches them specially. Maps principal id
+# to the label shown in admin UIs; dict order is display order.
+PUBLIC_PRINCIPALS = {
+    "*": "Anyone (signed in or not)",
+    "_signed_in": "Any signed-in user",
+    "_anonymous": "Signed-out (anonymous) visitors only",
+}
+
+
 async def can_edit_permissions(datasette, actor):
     return await datasette.allowed(actor=actor, action="datasette-acl")
 

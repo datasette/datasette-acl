@@ -47,6 +47,18 @@ table.audit td {
   {% endfor %}
 {% endif %}
 
+<h3>General access</h3>
+{% for principal, label in public_principals.items() %}
+  <div style="margin-bottom: 1em">
+    <label style="display: block" for="id_public_permissions_{{ loop.index }}">{{ label }} (<code>{{ principal }}</code>)</label>
+    <select multiple name="public_permissions_{{ principal }}" id="id_public_permissions_{{ loop.index }}">
+      {% for action in actions %}
+        <option value="{{ action }}" {% if public_permissions and public_permissions.get(principal, {}).get(action) %}selected{% endif %}>{{ action }}</option>
+      {% endfor %}
+    </select>
+  </div>
+{% endfor %}
+
 <h3>Users</h3>
 {% for user in user_permissions %}
   <div>

@@ -46,6 +46,7 @@ from datasette import Response, Forbidden
 from datasette_acl.grants import grant, revoke, update_role, list_grants
 from datasette_acl.roles import role_for_actions, roles_for
 from datasette_acl.utils import (
+    PUBLIC_PRINCIPALS,
     build_resource,
     can_manage,
     resource_class_for,
@@ -53,11 +54,6 @@ from datasette_acl.utils import (
     can_edit_permissions,
     get_acl_valid_actors,
 )
-
-# Wildcard / "general access" principals. These are stored as actor_id values in
-# acl rows but represent classes of actor rather than a specific person, so the
-# UI renders them in a separate "General access" section.
-PUBLIC_PRINCIPALS = {"*", "_signed_in", "_anonymous"}
 
 
 def _roles_payload(roles):

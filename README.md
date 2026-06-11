@@ -68,6 +68,8 @@ A generic admin page for any resource type lives at:
 
 For example `/-/acl/resource/playlist/workspace-1/playlist-42`. The `<child>` segment is optional for parent-only resource types (`/-/acl/resource/<resource-type>/<parent>`). The page presents the same group/user grant interface and audit log as the table page, with checkboxes for exactly the actions registered for that resource type. Access to this admin page is gated on the `datasette-acl` permission described below.
 
+The page also has a **General access** section for exposing a resource without naming individual users, using the wildcard principals: `*` grants an action to anyone (signed in or not), `_signed_in` to any authenticated actor, and `_anonymous` to signed-out visitors only.
+
 Grants made here flow through Datasette's permission system: once granted, `await datasette.allowed(actor=..., action="playlist-edit", resource=Playlist("workspace-1", "playlist-42"))` returns `True`.
 
 ### Declaring roles

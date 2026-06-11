@@ -1,6 +1,7 @@
 from datasette import Response, Forbidden
 from datasette_acl.grants import _ensure_resource_id
 from datasette_acl.utils import (
+    PUBLIC_PRINCIPALS,
     actions_for_resource_type,
     can_manage,
     generate_changes_message,
@@ -59,6 +60,7 @@ async def manage_resource_acls(request, datasette):
 
     current_group_permissions = {}
     current_user_permissions = {}
+    current_public_permissions = {}
     acl_rows = await internal_db.execute(
         """
         select
@@ -80,7 +82,12 @@ async def manage_resource_acls(request, datasette):
             current_group_permissions.setdefault(group_name, {})[action_name] = True
         else:
             assert actor_id
-            current_user_permissions.setdefault(actor_id, {})[action_name] = True
+            if actor_id in PUBLIC_PRINCIPALS:
+                current_public_permissions.setdefault(actor_id, {})[
+                    action_name
+                ] = True
+            else:
+                current_user_permissions.setdefault(actor_id, {})[action_name] = True
 
     if request.method == "POST":
         group_changes_made = {"added": [], "removed": []}
@@ -161,10 +168,21 @@ async def manage_resource_acls(request, datasette):
                         },
                     )
         user_changes_made = {"added": [], "removed": []}
-        for actor_id in list(current_user_permissions) + [None]:
+        public_changes_made = {"added": [], "removed": []}
+        # Wildcard "general access" principals are stored as actor_id values, so
+        # they share the actor-grant write path below. Like groups, their selects
+        # are always present in the form, so unchecking removes the grant.
+        for actor_id in (
+            list(PUBLIC_PRINCIPALS) + list(current_user_permissions) + [None]
+        ):
             if actor_id is None:
                 actor_id = (post_vars.get("new_actor_id") or "").strip()
                 if not actor_id:
+                    continue
+                if actor_id in PUBLIC_PRINCIPALS:
+                    # The general-access selects are the canonical write path
+                    # for wildcards; this same request already processed them,
+                    # so a second pass would diff against stale state.
                     continue
                 if not await validate_actor_id(datasette, actor_id):
                     datasette.add_message(
@@ -172,16 +190,25 @@ async def manage_resource_acls(request, datasette):
                     )
                     return Response.redirect(request.path)
                 user_actions_key = "new_user_actions"
+            elif actor_id in PUBLIC_PRINCIPALS:
+                user_actions_key = f"public_permissions_{actor_id}"
             else:
                 user_actions_key = f"user_permissions_{actor_id}"
+
+            if actor_id in PUBLIC_PRINCIPALS:
+                current = current_public_permissions
+                changes_made = public_changes_made
+                display_name = PUBLIC_PRINCIPALS[actor_id]
+            else:
+                current = current_user_permissions
+                changes_made = user_changes_made
+                display_name = actor_id
 
             selected_user_actions = post_vars.getlist(user_actions_key)
 
             for action_name in actions:
                 new_value = action_name in selected_user_actions
-                current_value = bool(
-                    current_user_permissions.get(actor_id, {}).get(action_name)
-                )
+                current_value = bool(current.get(actor_id, {}).get(action_name))
                 if new_value != current_value:
                     if new_value:
                         await internal_db.execute_write(
@@ -201,7 +228,7 @@ async def manage_resource_acls(request, datasette):
                             },
                         )
                         operation = "added"
-                        user_changes_made["added"].append((actor_id, action_name))
+                        changes_made["added"].append((display_name, action_name))
                     else:
                         await internal_db.execute_write(
                             """
@@ -218,7 +245,7 @@ async def manage_resource_acls(request, datasette):
                             },
                         )
                         operation = "removed"
-                        user_changes_made["removed"].append((actor_id, action_name))
+                        changes_made["removed"].append((display_name, action_name))
                     await internal_db.execute_write(
                         """
                         insert into acl_audit (
@@ -246,10 +273,15 @@ async def manage_resource_acls(request, datasette):
                         },
                     )
 
-        if group_changes_made or user_changes_made:
+        if group_changes_made or public_changes_made or user_changes_made:
             group_message = generate_changes_message(group_changes_made, "group")
             if group_message:
                 datasette.add_message(request, group_message)
+            public_message = generate_changes_message(
+                public_changes_made, "general access"
+            )
+            if public_message:
+                datasette.add_message(request, public_message)
             user_message = generate_changes_message(user_changes_made, "user")
             if user_message:
                 datasette.add_message(request, user_message)
@@ -306,6 +338,8 @@ async def manage_resource_acls(request, datasette):
                 "group_sizes": group_sizes,
                 "group_permissions": current_group_permissions,
                 "user_permissions": current_user_permissions,
+                "public_principals": PUBLIC_PRINCIPALS,
+                "public_permissions": current_public_permissions,
                 "audit_log": audit_log.rows,
                 "valid_actors": await get_acl_valid_actors(datasette),
             },

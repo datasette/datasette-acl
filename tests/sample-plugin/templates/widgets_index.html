@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Widgets{% endblock %}
+
+{% block content %}
+<h1>Widgets</h1>
+
+{% if signed_in %}
+  <form action="{{ urls.path("/-/widgets") }}" method="post" style="margin-bottom: 1.5em">
+    <input data-1p-ignore name="name" placeholder="Widget name" required>
+    <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+    <input type="submit" value="Create widget" class="core">
+  </form>
+{% else %}
+  <p>Sign in (pick a character from the actor switcher) to create widgets.</p>
+{% endif %}
+
+{% if widgets %}
+  <table>
+    <thead>
+      <tr><th>Widget</th><th>Created by</th><th>Your role</th></tr>
+    </thead>
+    <tbody>
+      {% for widget in widgets %}
+        <tr>
+          <td><a href="{{ urls.path("/-/widgets/" + widget.id|string) }}">{{ widget.name }}</a></td>
+          <td>{{ widget.creator_name }}</td>
+          <td>{{ widget.role }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p>No widgets are visible to you yet.</p>
+{% endif %}
+{% endblock %}

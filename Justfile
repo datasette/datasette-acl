@@ -22,20 +22,10 @@ dev *flags:
     -s permissions.datasette-acl.id root \
     -s plugins.datasette-acl.dynamic-groups.daily-planet.newsroom daily-planet \
     -s plugins.datasette-acl.dynamic-groups.gotham-gazette.newsroom gotham-gazette \
-    tmp.db --create \
+    tmp.db internal.db --create \
     --internal internal.db \
     -p 5172 \
     {{flags}}
-
-# Same as `dev`, but restarts datasette when .py/.html files change.
-dev-with-hmr *flags:
-  watchexec \
-    --stop-signal SIGKILL \
-    -e py,html \
-    --ignore '*.db' \
-    --restart \
-    --clear -- \
-    just dev {{flags}}
 
 test *options:
   uv run pytest {{options}}

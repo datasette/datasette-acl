@@ -80,7 +80,10 @@ stored as `public`, anything else as `actor`. Pass
 whose id collides with a wildcard (e.g. a user literally named `_signed_in`),
 or `"principal_type": "public"` to assert the id must be a wildcard (a
 non-wildcard id is then a `400`). The two row shapes are independent: granting,
-updating or revoking one never affects the other.
+updating or revoking one never affects the other, and enforcement matches on
+the `(principal_type, id)` pair — a signed-in caller whose actor id is
+literally `_anonymous` only ever matches an explicit `actor` grant, never the
+anonymous wildcard.
 
 ### Roles vs. actions
 
@@ -141,6 +144,24 @@ Read and mutation responses describe a principal's grant with the same shape.
 - `kind` is always `"group"`.
 - `display_name` is the group name; `member_count` is the number of actors in
   the group.
+
+**Public (wildcard) entry:**
+
+```json
+{
+  "principal": "actor",
+  "id": "_signed_in",
+  "role": "Viewer",
+  "actions": ["doc-view"],
+  "kind": "public"
+}
+```
+
+- Note the `principal` field stays `"actor"` for wildcard grants — that is the
+  client contract; distinguish wildcards by `kind: "public"`. (The stored row
+  is `principal_type = 'public'`; only the JSON rendering folds it into
+  `actor`.)
+- Wildcards are never enriched: no `display_name` / `email` / `avatar_url`.
 
 ---
 
@@ -531,13 +552,17 @@ curl -s -X POST 'https://example.org/-/acl/api/resource/mock-doc/42/grant' \
   -d '{"group_id": 7, "actions": ["doc-view"]}'
 ```
 
-Make the document public to signed-in users:
+Make the document public to signed-in users — the wildcard `actor_id` is
+stored as a `public` grant (no `principal_type` needed; it is inferred):
 
 ```bash
 curl -s -X POST 'https://example.org/-/acl/api/resource/mock-doc/42/grant' \
   -H 'Cookie: ds_actor=...' \
   -H 'Content-Type: application/json' \
   -d '{"actor_id": "_signed_in", "role": "Viewer"}'
+# -> {"ok": true, "grant": {"principal":"actor","id":"_signed_in",
+#                           "role":"Viewer","actions":["doc-view"],
+#                           "kind":"public"}}
 ```
 
 Revoke `bob` entirely:

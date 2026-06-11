@@ -15,13 +15,15 @@ datasette install datasette-acl
 ```
 ## Usage
 
-This plugin is under active development. It currently only supports configuring [permissions](https://docs.datasette.io/en/latest/authentication.html#permissions) for individual tables, controlling the following:
+This plugin is under active development. It supports configuring [permissions](https://docs.datasette.io/en/latest/authentication.html#permissions) for individual tables — controlling the following actions — as well as for [any custom resource type](#custom-resource-types) registered by a plugin:
 
 - `insert-row`
 - `delete-row`
 - `update-row`
 - `alter-table`
 - `drop-table`
+
+Grants can target individual users, [user groups](#user-groups), or [general-access wildcard principals](#principals-and-general-access) like `_signed_in`.
 
 Permissions are saved in the internal database. This means you should run Datasette with the `--internal path/to/internal.db` option, otherwise your permissions will be reset every time you restart Datasette.
 
@@ -32,6 +34,8 @@ A JSON HTTP API for reading and managing per-resource grants programmatically is
 The interface for configuring table permissions lives at `/database-name/table-name/-/acl`. It can be accessed from the table actions menu on the table page.
 
 Permission can be granted for each of the above table actions. They can be assigned to both groups and individual users, who can be added using their `actor["id"]`.
+
+The table page does not (yet) offer the **General access** section found on the generic resource page — to grant a table action to a wildcard principal such as `_signed_in`, use the [JSON API](docs/json-api.md) or the [Python helpers](#python-api-for-managing-grants). See [Principals and general access](#principals-and-general-access).
 
 An audit log tracks which permissions were added and removed, displayed at the bottom of the table permissions page.
 
@@ -68,11 +72,27 @@ A generic admin page for any resource type lives at:
 
 For example `/-/acl/resource/playlist/workspace-1/playlist-42`. The `<child>` segment is optional for parent-only resource types (`/-/acl/resource/<resource-type>/<parent>`). The page presents the same group/user grant interface and audit log as the table page, with checkboxes for exactly the actions registered for that resource type. Access to this admin page is gated on the `datasette-acl` permission described below.
 
-The page also has a **General access** section for exposing a resource without naming individual users, using the wildcard principals: `*` grants an action to anyone (signed in or not), `_signed_in` to any authenticated actor, and `_anonymous` to signed-out visitors only.
-
-Every stored grant carries an explicit `principal_type` column — `actor`, `group` or `public` — so wildcard grants are distinguished from real users at the storage layer, not by string comparison. Permission checks match on `(principal_type, id)` pairs: a signed-in user whose id happens to be `_anonymous` can never inherit grants intended for signed-out visitors, and revoking a wildcard grant can never delete a like-named user's grant. Two things remain convention rather than enforcement: audit history rows written before the `principal_type` migration display wildcard-looking ids without knowing which they were, and any third-party code writing raw SQL into the `acl` table must now supply the `principal_type` column itself (use the [Python API](#python-api-for-managing-grants) instead).
+The page also has a **General access** section for exposing a resource without naming individual users — see [Principals and general access](#principals-and-general-access) below.
 
 Grants made here flow through Datasette's permission system: once granted, `await datasette.allowed(actor=..., action="playlist-edit", resource=Playlist("workspace-1", "playlist-42"))` returns `True`.
+
+### Principals and general access
+
+Every grant names exactly one **principal**, and every stored grant records which kind it is in an explicit `principal_type` column:
+
+- **`actor`** — an individual user, identified by their `actor["id"]`.
+- **`group`** — a [user group](#user-groups); the grant applies to all of its members.
+- **`public`** — one of three wildcard principals that match a *class* of caller rather than a specific person:
+
+| Wildcard | Grants to |
+| --- | --- |
+| `*` | Anyone, signed in or not |
+| `_signed_in` | Any authenticated actor |
+| `_anonymous` | Signed-out (anonymous) visitors only |
+
+The generic resource admin page presents the wildcards as its **General access** section (labelled "Anyone (signed in or not)", "Any signed-in user" and "Signed-out (anonymous) visitors only"), and the audit log's Principal column shows the same labels. The wildcards can also be granted programmatically by passing the wildcard string as the `actor_id` to the [JSON API](docs/json-api.md) or the [Python helpers](#python-api-for-managing-grants).
+
+Because `principal_type` is stored explicitly, wildcard grants are distinguished from real users at the storage layer, not by string comparison. Permission checks match on `(principal_type, id)` pairs: a signed-in user whose id happens to be `_anonymous` can never inherit grants intended for signed-out visitors, and revoking a wildcard grant can never delete a like-named user's grant. Two things remain convention rather than enforcement: audit history rows written before the `principal_type` migration display wildcard-looking ids without knowing which they were, and any third-party code writing raw SQL into the `acl` table must now supply the `principal_type` column itself (use the [Python API](#python-api-for-managing-grants) instead).
 
 ### Declaring roles
 
@@ -227,7 +247,16 @@ def datasette_acl_valid_actors(datasette):
 
 Provide exactly one principal (`actor_id=` or `group_id=`), and for `grant()` exactly one of `role=` or `actions=`.
 
-An `actor_id` that is one of the wildcard principals (`*`, `_signed_in`, `_anonymous`) is stored as a `public` grant by default. Pass `principal_type="actor"` to `grant()`, `update_role()` or `revoke()` to override that inference and target a real user whose id collides with a wildcard; `principal_type="public"` asserts the id must be a wildcard (anything else raises `ValueError`).
+An `actor_id` that is one of the [wildcard principals](#principals-and-general-access) (`*`, `_signed_in`, `_anonymous`) is stored as a `public` grant by default. Pass `principal_type="actor"` to `grant()`, `update_role()` or `revoke()` to override that inference and target a real user whose id collides with a wildcard; `principal_type="public"` asserts the id must be a wildcard (anything else raises `ValueError`):
+
+```python
+# Stored as a public grant: any signed-in user becomes a Viewer
+await grant(datasette, "doc", "doc1", actor_id="_signed_in", role="Viewer")
+# Explicit override: a real user whose id is literally "_signed_in"
+await grant(datasette, "doc", "doc1", actor_id="_signed_in", role="Viewer", principal_type="actor")
+```
+
+The two grants above are independent rows — revoking one never touches the other.
 
 ```python
 from datasette_acl.grants import grant, revoke, update_role, list_grants

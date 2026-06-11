@@ -121,7 +121,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <td>{{ entry.timestamp }}</td>
         <td>{{ entry.operation_by }}</td>
         <td>{{ entry.operation }}</td>
-        <td>{% if entry.principal_type == 'group' %}{{ entry.group_name }} (group){% elif entry.principal_type == 'public' %}{{ public_principals.get(entry.actor_id, entry.actor_id) }} (general access){% else %}{{ entry.actor_id or '' }}{% endif %}</td>
+        <td>{% if entry.principal_type == 'group' %}{{ entry.group_name }} (group){% elif entry.principal_type in public_principals %}{{ public_principals[entry.principal_type] }} (general access){% else %}{{ entry.actor_id or '' }}{% endif %}</td>
         <td>{{ entry.action_name }}</td>
       </tr>
     {% endfor %}

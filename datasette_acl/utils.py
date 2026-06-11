@@ -9,14 +9,17 @@ if TYPE_CHECKING:
     from datasette.permissions import Resource
 
 
-# Wildcard / "general access" principals. These are stored as actor_id values
-# in acl rows but represent classes of actor rather than a specific person --
-# the permission_resources_sql hook matches them specially. Maps principal id
-# to the label shown in admin UIs; dict order is display order.
-PUBLIC_PRINCIPALS = {
-    "*": "Anyone (signed in or not)",
-    "_signed_in": "Any signed-in user",
-    "_anonymous": "Signed-out (anonymous) visitors only",
+# Public / "general access" principal types. Each is a first-class
+# principal_type value on acl rows (alongside 'actor' and 'group') matching a
+# class of caller rather than a specific person; public rows store no id at
+# all. Maps principal_type to the label shown in admin UIs; dict order is
+# display order. The set is closed by design and duplicated in the acl table's
+# CHECK constraint (internal_migrations.m004) -- adding an audience requires a
+# deliberate migration.
+PUBLIC_PRINCIPAL_TYPES = {
+    "everyone": "Anyone (signed in or not)",
+    "authenticated": "Any signed-in user",
+    "anonymous": "Signed-out (anonymous) visitors only",
 }
 
 

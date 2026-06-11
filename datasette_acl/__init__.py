@@ -225,17 +225,15 @@ def permission_resources_sql(datasette, actor, action):
             await update_dynamic_groups(
                 datasette, actor, skip_cache=hasattr(sys, "_pytest_running")
             )
-        # General-access (wildcard) principals are stored with
-        # principal_type = 'public':
-        #   '*'          -> anyone, including anonymous
-        #   '_signed_in' -> any actor that has an id (only when signed in)
-        #   '_anonymous' -> only unauthenticated callers (no actor id)
-        # Direct actor grants and group grants only apply when signed in.
-        # Every branch is constrained by principal_type, so a signed-in caller
-        # whose actor id is literally '_anonymous' matches only rows stored as
-        # ('actor', '_anonymous') -- never the anonymous wildcard. Before
-        # principal_type, the direct-grant branch matched wildcard rows by bare
-        # string comparison and leaked '_anonymous' grants to such a caller.
+        # A grant's audience is named entirely by principal_type:
+        #   'actor'         -> the one actor whose id matches (signed in only)
+        #   'group'         -> members of the group (signed in only)
+        #   'everyone'      -> anyone, including anonymous
+        #   'authenticated' -> any caller that has an actor id
+        #   'anonymous'     -> only unauthenticated callers (no actor id)
+        # Public-audience rows store no id at all, so no reserved actor-id
+        # namespace exists: an actor's grants are only ever the 'actor' rows
+        # matching their literal id, whatever that id is.
         # NOTE: this must be a single SELECT statement with no leading CTE
         # (WITH ...). Datasette core inlines this SQL after a "UNION ALL" when
         # building its anon_rules block for include_is_private queries, and a
@@ -251,7 +249,9 @@ SELECT
         CASE
             WHEN a.principal_type = 'group'
                 THEN 'group:' || g.name
-            ELSE a.principal_type || ':' || a.actor_id
+            WHEN a.principal_type = 'actor'
+                THEN 'actor:' || a.actor_id
+            ELSE a.principal_type
         END,
         ', '
     ) AS reason
@@ -262,13 +262,11 @@ LEFT JOIN acl_groups g ON a.group_id = g.id
 WHERE aa.name = :action
   AND ar.resource_type = :resource_type
   AND (
-    (a.principal_type = 'public' AND a.actor_id = '*')
+    a.principal_type = 'everyone'
     OR (:actor_id IS NOT NULL
         AND a.principal_type = 'actor' AND a.actor_id = :actor_id)
-    OR (:actor_id IS NOT NULL
-        AND a.principal_type = 'public' AND a.actor_id = '_signed_in')
-    OR (:actor_id IS NULL
-        AND a.principal_type = 'public' AND a.actor_id = '_anonymous')
+    OR (:actor_id IS NOT NULL AND a.principal_type = 'authenticated')
+    OR (:actor_id IS NULL AND a.principal_type = 'anonymous')
     OR (a.principal_type = 'group' AND a.group_id IN (
         SELECT ag.group_id
         FROM acl_actor_groups ag

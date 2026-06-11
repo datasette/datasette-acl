@@ -594,11 +594,14 @@ def test_acl_resources_migration():
     assert rows_again == rows
 
 
-def test_principal_type_migration():
-    # Apply up to (not including) m003 to get the old acl shape, insert
-    # old-shape rows -- a wildcard actor, a real actor, a group grant and an
-    # exact duplicate pair (possible before m003 because the old UNIQUE
-    # constraint never fired across NULLs) -- plus audit rows, then run m003.
+def test_principal_type_migrations():
+    # Apply up to (not including) m003 to get the original acl shape, insert
+    # original-shape rows -- an in-band wildcard actor row, a real actor, a
+    # group grant and an exact duplicate pair (possible before m003 because
+    # the original UNIQUE constraint never fired across NULLs) -- plus audit
+    # rows, then run the remaining migrations (m003 + m004). The end state is
+    # the audience model: the wildcard row becomes principal_type
+    # 'authenticated' with no id, duplicates collapse, ids are preserved.
     db = Database(memory=True)
     internal_migrations.apply(db, stop_before="m003_principal_type")
 
@@ -609,7 +612,7 @@ def test_principal_type_migration():
     db.execute("insert into acl_actions (name) values ('doc-view')")
     db.execute("insert into acl_groups (name) values ('staff')")
     insert = "insert into acl (actor_id, group_id, resource_id, action_id) values (?, ?, 1, 1)"
-    db.execute(insert, ["_signed_in", None])  # (a) wildcard actor row
+    db.execute(insert, ["_signed_in", None])  # (a) in-band wildcard row
     db.execute(insert, ["alice", None])  # (b) real-actor row
     db.execute(insert, [None, 1])  # (c) group row
     db.execute(insert, ["alice", None])  # (d) exact duplicate of (b)
@@ -629,10 +632,10 @@ def test_principal_type_migration():
             "select acl_id, principal_type, actor_id, group_id from acl order by acl_id"
         )
     )
-    # Types backfilled, the duplicate pair collapsed to one row, ids preserved
-    # (min(acl_id) per surviving group).
+    # Types backfilled, the legacy wildcard translated to its audience type
+    # (with no id), the duplicate pair collapsed to one row, ids preserved.
     assert rows == [
-        {"acl_id": 1, "principal_type": "public", "actor_id": "_signed_in", "group_id": None},
+        {"acl_id": 1, "principal_type": "authenticated", "actor_id": None, "group_id": None},
         {"acl_id": 2, "principal_type": "actor", "actor_id": "alice", "group_id": None},
         {"acl_id": 3, "principal_type": "group", "actor_id": None, "group_id": 1},
     ]
@@ -643,20 +646,26 @@ def test_principal_type_migration():
         db.query("select principal_type, actor_id, group_id from acl_audit order by id")
     )
     assert audit == [
-        {"principal_type": "public", "actor_id": "_signed_in", "group_id": None},
+        {"principal_type": "authenticated", "actor_id": None, "group_id": None},
         {"principal_type": "actor", "actor_id": "alice", "group_id": None},
         {"principal_type": "group", "actor_id": None, "group_id": 1},
     ]
 
-    # The new partial unique indexes actually dedupe: INSERT OR IGNORE of an
-    # existing (principal_type, actor_id, resource, action) is a no-op.
+    # The partial unique indexes actually dedupe: INSERT OR IGNORE of an
+    # existing (actor, resource, action) is a no-op.
     db.execute(
         "insert or ignore into acl (principal_type, actor_id, group_id, resource_id, action_id) "
         "values ('actor', 'alice', null, 1, 1)"
     )
     assert db.execute("select count(*) from acl").fetchone()[0] == 3
-    # ...while ('public', '_signed_in') and ('actor', '_signed_in') coexist as
-    # distinct rows -- the disambiguation this migration exists for.
+    # ...and a duplicate audience row is also a no-op (acl_public_unique).
+    db.execute(
+        "insert or ignore into acl (principal_type, actor_id, group_id, resource_id, action_id) "
+        "values ('authenticated', null, null, 1, 1)"
+    )
+    assert db.execute("select count(*) from acl").fetchone()[0] == 3
+    # An actor whose id merely looks like an old wildcard is an ordinary actor
+    # row, coexisting with the audience grant.
     db.execute(
         "insert or ignore into acl (principal_type, actor_id, group_id, resource_id, action_id) "
         "values ('actor', '_signed_in', null, 1, 1)"
@@ -667,7 +676,9 @@ def test_principal_type_migration():
     import sqlite3
 
     for bad in (
-        ("public", "bob", None),  # public with a non-wildcard id
+        ("everyone", "bob", None),  # audience with an actor_id
+        ("anonymous", None, 1),  # audience with a group_id
+        ("actor", None, None),  # actor without an id
         ("actor", "carol", 1),  # actor with a group_id
         ("group", "carol", None),  # group with an actor_id
         ("alien", "dave", None),  # unknown principal_type
@@ -682,6 +693,60 @@ def test_principal_type_migration():
     # Re-applying is idempotent.
     internal_migrations.apply(db)
     assert db.execute("select count(*) from acl").fetchone()[0] == 4
+
+
+def test_public_principal_types_migration():
+    # m004 specifically: start from the intermediate m003 shape (audiences
+    # stored in-band as 'public' rows with wildcard actor_ids), insert every
+    # wildcard plus a coexisting like-named actor row, then run m004 and
+    # assert each 'public' row converts to its audience type with the id
+    # dropped -- while actor and group rows pass through untouched.
+    db = Database(memory=True)
+    internal_migrations.apply(db, stop_before="m004_public_principal_types")
+
+    db.execute("insert into acl_resources (resource_type, parent) values ('doc', '42')")
+    db.execute("insert into acl_actions (name) values ('doc-view')")
+    db.execute("insert into acl_groups (name) values ('staff')")
+    insert = (
+        "insert into acl (principal_type, actor_id, group_id, resource_id, action_id) "
+        "values (?, ?, ?, 1, 1)"
+    )
+    db.execute(insert, ["public", "*", None])
+    db.execute(insert, ["public", "_signed_in", None])
+    db.execute(insert, ["public", "_anonymous", None])
+    db.execute(insert, ["actor", "_signed_in", None])  # like-named real actor
+    db.execute(insert, ["group", None, 1])
+    db.execute(
+        """
+        insert into acl_audit (operation, principal_type, actor_id, group_id, resource_id, action_id)
+        values ('added', 'public', '*', null, 1, 1),
+               ('added', 'actor', '_signed_in', null, 1, 1)
+        """
+    )
+
+    internal_migrations.apply(db)
+
+    rows = list(
+        db.query(
+            "select acl_id, principal_type, actor_id, group_id from acl order by acl_id"
+        )
+    )
+    assert rows == [
+        {"acl_id": 1, "principal_type": "everyone", "actor_id": None, "group_id": None},
+        {"acl_id": 2, "principal_type": "authenticated", "actor_id": None, "group_id": None},
+        {"acl_id": 3, "principal_type": "anonymous", "actor_id": None, "group_id": None},
+        {"acl_id": 4, "principal_type": "actor", "actor_id": "_signed_in", "group_id": None},
+        {"acl_id": 5, "principal_type": "group", "actor_id": None, "group_id": 1},
+    ]
+    assert "acl_old" not in db.table_names()
+
+    audit = list(
+        db.query("select principal_type, actor_id from acl_audit order by id")
+    )
+    assert audit == [
+        {"principal_type": "everyone", "actor_id": None},
+        {"principal_type": "actor", "actor_id": "_signed_in"},
+    ]
 
 
 @pytest.mark.asyncio

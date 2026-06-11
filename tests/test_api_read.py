@@ -2,11 +2,11 @@
 
     GET /-/acl/api/resource/{resource_type}/{parent}/{child}
 
-Seeds actor / group / wildcard grants on a mock resource and asserts the JSON
-shape: grants grouped by principal with a resolved role, actor enrichment from a
-fake ``actors_from_ids`` test plugin (display name / email / avatar / kind),
-group ``member_count``, wildcard principals flagged ``kind:"public"``, and the
-``roles`` registry + ``can_manage`` flag.
+Seeds actor / group / public-audience grants on a mock resource and asserts the
+JSON shape: grants grouped by principal with a resolved role, actor enrichment
+from a fake ``actors_from_ids`` test plugin (display name / email / avatar /
+kind), group ``member_count``, public audiences flagged ``kind:"public"``, and
+the ``roles`` registry + ``can_manage`` flag.
 """
 
 from datasette import hookimpl
@@ -185,7 +185,12 @@ async def test_read_full_shape(api_ds):
     )
     await grant(api_ds, "mock-doc", "42", group_id=gid, role="Viewer", by_actor="root")
     await grant(
-        api_ds, "mock-doc", "42", actor_id="_signed_in", role="Viewer", by_actor="root"
+        api_ds,
+        "mock-doc",
+        "42",
+        principal_type="authenticated",
+        role="Viewer",
+        by_actor="root",
     )
 
     response = await _get(
@@ -227,12 +232,13 @@ async def test_read_full_shape(api_ds):
     assert group["display_name"] == "staff"
     assert group["member_count"] == 0
 
-    # Wildcard principal flagged public.
-    wildcard = grants[("actor", "_signed_in")]
-    assert wildcard["role"] == "Viewer"
-    assert wildcard["kind"] == "public"
-    # No enrichment looked up for a wildcard principal.
-    assert "display_name" not in wildcard
+    # Public audience flagged public; its id echoes the audience type and the
+    # display name is the friendly label (never looked up via actors_from_ids).
+    public = grants[("public", "authenticated")]
+    assert public["role"] == "Viewer"
+    assert public["kind"] == "public"
+    assert public["display_name"] == "Any signed-in user"
+    assert "email" not in public
 
 
 @pytest.mark.asyncio

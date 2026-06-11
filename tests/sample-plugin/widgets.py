@@ -15,7 +15,7 @@ packaged plugin — it is dev/demo scaffolding only). It implements a minimal
   they can rename it, and — because Manager carries ``manage=True`` — acl's
   ``can_manage`` gate lets them open the admin page at
   ``/-/acl/resource/widget/widgets/<id>`` to share it with other actors,
-  groups, or the General access wildcards, without holding the global
+  groups, or the General access audiences, without holding the global
   ``datasette-acl`` permission.
 
 Pair with datasette-debug-gotham: its actor switcher signs you in as Clark,

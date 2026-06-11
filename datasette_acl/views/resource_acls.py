@@ -1,7 +1,7 @@
 from datasette import Response, Forbidden
 from datasette_acl.grants import _ensure_resource_id
 from datasette_acl.utils import (
-    PUBLIC_PRINCIPALS,
+    PUBLIC_PRINCIPAL_TYPES,
     actions_for_resource_type,
     can_manage,
     generate_changes_message,
@@ -77,12 +77,13 @@ async def manage_resource_acls(request, datasette):
     )
     for row in acl_rows.rows:
         action_name = row["action_name"]
-        if row["principal_type"] == "group":
+        principal_type = row["principal_type"]
+        if principal_type == "group":
             current_group_permissions.setdefault(row["group_name"], {})[
                 action_name
             ] = True
-        elif row["principal_type"] == "public":
-            current_public_permissions.setdefault(row["actor_id"], {})[
+        elif principal_type in PUBLIC_PRINCIPAL_TYPES:
+            current_public_permissions.setdefault(principal_type, {})[
                 action_name
             ] = True
         else:
@@ -171,50 +172,21 @@ async def manage_resource_acls(request, datasette):
                             "operation_by": request.actor["id"],
                         },
                     )
-        user_changes_made = {"added": [], "removed": []}
         public_changes_made = {"added": [], "removed": []}
-        # Wildcard "general access" principals are stored as actor_id values, so
-        # they share the actor-grant write path below. Like groups, their selects
-        # are always present in the form, so unchecking removes the grant.
-        for actor_id in (
-            list(PUBLIC_PRINCIPALS) + list(current_user_permissions) + [None]
-        ):
-            if actor_id is None:
-                actor_id = (post_vars.get("new_actor_id") or "").strip()
-                if not actor_id:
-                    continue
-                if actor_id in PUBLIC_PRINCIPALS:
-                    # The general-access selects are the canonical write path
-                    # for wildcards; this same request already processed them,
-                    # so a second pass would diff against stale state.
-                    continue
-                if not await validate_actor_id(datasette, actor_id):
-                    datasette.add_message(
-                        request, "That user ID is not valid", datasette.ERROR
-                    )
-                    return Response.redirect(request.path)
-                user_actions_key = "new_user_actions"
-            elif actor_id in PUBLIC_PRINCIPALS:
-                user_actions_key = f"public_permissions_{actor_id}"
-            else:
-                user_actions_key = f"user_permissions_{actor_id}"
-
-            if actor_id in PUBLIC_PRINCIPALS:
-                principal_type = "public"
-                current = current_public_permissions
-                changes_made = public_changes_made
-                display_name = PUBLIC_PRINCIPALS[actor_id]
-            else:
-                principal_type = "actor"
-                current = current_user_permissions
-                changes_made = user_changes_made
-                display_name = actor_id
-
-            selected_user_actions = post_vars.getlist(user_actions_key)
-
+        # Public audiences are identified by principal_type alone -- no id.
+        # Like groups, their selects are always present in the form, so
+        # unchecking removes the grant.
+        for principal_type, display_name in PUBLIC_PRINCIPAL_TYPES.items():
+            selected_public_actions = post_vars.getlist(
+                f"public_permissions_{principal_type}"
+            )
             for action_name in actions:
-                new_value = action_name in selected_user_actions
-                current_value = bool(current.get(actor_id, {}).get(action_name))
+                new_value = action_name in selected_public_actions
+                current_value = bool(
+                    current_public_permissions.get(principal_type, {}).get(
+                        action_name
+                    )
+                )
                 if new_value != current_value:
                     if new_value:
                         await internal_db.execute_write(
@@ -222,7 +194,7 @@ async def manage_resource_acls(request, datasette):
                             insert into acl (principal_type, actor_id, group_id, resource_id, action_id)
                             values (
                                 :principal_type,
-                                :actor_id,
+                                null,
                                 null,
                                 :resource_id,
                                 (select id from acl_actions where name = :action_name)
@@ -230,34 +202,32 @@ async def manage_resource_acls(request, datasette):
                             """,
                             {
                                 "principal_type": principal_type,
-                                "actor_id": actor_id,
                                 "action_name": action_name,
                                 "resource_id": resource_id,
                             },
                         )
                         operation = "added"
-                        changes_made["added"].append((display_name, action_name))
+                        public_changes_made["added"].append(
+                            (display_name, action_name)
+                        )
                     else:
-                        # Delete on (principal_type, actor_id) so revoking the
-                        # '_signed_in' wildcard can never delete a like-named
-                        # user's grant, and vice versa.
                         await internal_db.execute_write(
                             """
                             delete from acl where
                                 principal_type = :principal_type
-                                and actor_id = :actor_id
                                 and resource_id = :resource_id
                                 and action_id = (select id from acl_actions where name = :action_name)
                             """,
                             {
                                 "principal_type": principal_type,
-                                "actor_id": actor_id,
                                 "action_name": action_name,
                                 "resource_id": resource_id,
                             },
                         )
                         operation = "removed"
-                        changes_made["removed"].append((display_name, action_name))
+                        public_changes_made["removed"].append(
+                            (display_name, action_name)
+                        )
                     await internal_db.execute_write(
                         """
                         insert into acl_audit (
@@ -271,7 +241,7 @@ async def manage_resource_acls(request, datasette):
                         ) values (
                             :operation,
                             :principal_type,
-                            :actor_id,
+                            null,
                             null,
                             :resource_id,
                             (SELECT id FROM acl_actions WHERE name = :action_name),
@@ -281,6 +251,93 @@ async def manage_resource_acls(request, datasette):
                         {
                             "operation": operation,
                             "principal_type": principal_type,
+                            "resource_id": resource_id,
+                            "action_name": action_name,
+                            "operation_by": request.actor["id"],
+                        },
+                    )
+        user_changes_made = {"added": [], "removed": []}
+        for actor_id in list(current_user_permissions) + [None]:
+            if actor_id is None:
+                actor_id = (post_vars.get("new_actor_id") or "").strip()
+                if not actor_id:
+                    continue
+                if not await validate_actor_id(datasette, actor_id):
+                    datasette.add_message(
+                        request, "That user ID is not valid", datasette.ERROR
+                    )
+                    return Response.redirect(request.path)
+                user_actions_key = "new_user_actions"
+            else:
+                user_actions_key = f"user_permissions_{actor_id}"
+
+            selected_user_actions = post_vars.getlist(user_actions_key)
+
+            for action_name in actions:
+                new_value = action_name in selected_user_actions
+                current_value = bool(
+                    current_user_permissions.get(actor_id, {}).get(action_name)
+                )
+                if new_value != current_value:
+                    if new_value:
+                        await internal_db.execute_write(
+                            """
+                            insert into acl (principal_type, actor_id, group_id, resource_id, action_id)
+                            values (
+                                'actor',
+                                :actor_id,
+                                null,
+                                :resource_id,
+                                (select id from acl_actions where name = :action_name)
+                            )
+                            """,
+                            {
+                                "actor_id": actor_id,
+                                "action_name": action_name,
+                                "resource_id": resource_id,
+                            },
+                        )
+                        operation = "added"
+                        user_changes_made["added"].append((actor_id, action_name))
+                    else:
+                        await internal_db.execute_write(
+                            """
+                            delete from acl where
+                                principal_type = 'actor'
+                                and actor_id = :actor_id
+                                and resource_id = :resource_id
+                                and action_id = (select id from acl_actions where name = :action_name)
+                            """,
+                            {
+                                "actor_id": actor_id,
+                                "action_name": action_name,
+                                "resource_id": resource_id,
+                            },
+                        )
+                        operation = "removed"
+                        user_changes_made["removed"].append((actor_id, action_name))
+                    await internal_db.execute_write(
+                        """
+                        insert into acl_audit (
+                            operation,
+                            principal_type,
+                            actor_id,
+                            group_id,
+                            resource_id,
+                            action_id,
+                            operation_by
+                        ) values (
+                            :operation,
+                            'actor',
+                            :actor_id,
+                            null,
+                            :resource_id,
+                            (SELECT id FROM acl_actions WHERE name = :action_name),
+                            :operation_by
+                        )
+                        """,
+                        {
+                            "operation": operation,
                             "actor_id": actor_id,
                             "resource_id": resource_id,
                             "action_name": action_name,
@@ -354,7 +411,7 @@ async def manage_resource_acls(request, datasette):
                 "group_sizes": group_sizes,
                 "group_permissions": current_group_permissions,
                 "user_permissions": current_user_permissions,
-                "public_principals": PUBLIC_PRINCIPALS,
+                "public_principals": PUBLIC_PRINCIPAL_TYPES,
                 "public_permissions": current_public_permissions,
                 "audit_log": audit_log.rows,
                 "valid_actors": await get_acl_valid_actors(datasette),

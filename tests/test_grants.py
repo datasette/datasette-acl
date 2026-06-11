@@ -364,17 +364,20 @@ async def test_list_grants_empty(grants_ds):
 
 @pytest.mark.asyncio
 async def test_list_grants_public_principal_and_ordering(grants_ds):
-    # Wildcard grants come back as principal: "public" straight from the
-    # stored column; the list is ordered actor < group < public.
+    # Public-audience grants come back with principal naming the audience,
+    # straight from the stored column, with no id; the list is ordered actors,
+    # then groups, then audiences.
     gid = await _group_id(grants_ds, "staff")
-    await grant(grants_ds, "doc", "42", actor_id="*", role="Viewer", by_actor="root")
+    await grant(
+        grants_ds, "doc", "42", principal_type="everyone", role="Viewer", by_actor="root"
+    )
     await grant(grants_ds, "doc", "42", actor_id="alice", role="Editor", by_actor="root")
     await grant(grants_ds, "doc", "42", group_id=gid, role="Viewer", by_actor="root")
     grants = await list_grants(grants_ds, "doc", "42")
     assert [(g["principal"], g["actor_id"], g["group_id"]) for g in grants] == [
         ("actor", "alice", None),
         ("group", None, gid),
-        ("public", "*", None),
+        ("everyone", None, None),
     ]
 
 
@@ -382,19 +385,21 @@ async def test_list_grants_public_principal_and_ordering(grants_ds):
 
 
 def test_principal_type_for():
-    # Inference (the back-compat default)
+    # Resolution from whichever id was supplied
     assert principal_type_for("alice", None) == "actor"
-    assert principal_type_for("*", None) == "public"
-    assert principal_type_for("_signed_in", None) == "public"
     assert principal_type_for(None, 1) == "group"
-    # Explicit types are honored, letting a real user named like a wildcard
-    # be granted to as an individual
-    assert principal_type_for("_signed_in", None, "actor") == "actor"
-    assert principal_type_for("*", None, "public") == "public"
+    # Redundant explicit types are accepted alongside the matching id
+    assert principal_type_for("alice", None, "actor") == "actor"
     assert principal_type_for(None, 1, "group") == "group"
+    # Public audiences are named by principal_type alone, with no id
+    assert principal_type_for(None, None, "everyone") == "everyone"
+    assert principal_type_for(None, None, "authenticated") == "authenticated"
+    assert principal_type_for(None, None, "anonymous") == "anonymous"
     # Invalid combinations
     with pytest.raises(ValueError):
-        principal_type_for("bob", None, "public")  # non-wildcard id
+        principal_type_for("bob", None, "everyone")  # audience with actor_id
+    with pytest.raises(ValueError):
+        principal_type_for(None, 1, "anonymous")  # audience with group_id
     with pytest.raises(ValueError):
         principal_type_for("bob", None, "group")  # group needs group_id
     with pytest.raises(ValueError):
@@ -404,11 +409,13 @@ def test_principal_type_for():
     with pytest.raises(ValueError):
         principal_type_for(None, None)  # no principal
     with pytest.raises(ValueError):
-        principal_type_for("bob", 1)  # both principals
+        principal_type_for(None, None, "actor")  # actor type without an id
+    with pytest.raises(ValueError):
+        principal_type_for("bob", 1)  # both ids
 
 
 @pytest.mark.asyncio
-async def test_grant_public_type_with_real_actor_id_raises(grants_ds):
+async def test_grant_audience_with_actor_id_raises(grants_ds):
     with pytest.raises(ValueError):
         await grant(
             grants_ds,
@@ -416,14 +423,15 @@ async def test_grant_public_type_with_real_actor_id_raises(grants_ds):
             "42",
             actor_id="bob",
             role="Viewer",
-            principal_type="public",
+            principal_type="everyone",
         )
 
 
 @pytest.mark.asyncio
-async def test_raw_public_insert_with_real_actor_id_rejected(grants_ds):
+async def test_raw_audience_insert_with_actor_id_rejected(grants_ds):
     # The CHECK constraint is the storage-layer backstop behind the Python
-    # validation: ('public', 'bob') can never be stored, even by raw SQL.
+    # validation: an audience row carrying an actor_id can never be stored,
+    # even by raw SQL.
     import sqlite3
 
     db = grants_ds.get_internal_database()
@@ -431,7 +439,7 @@ async def test_raw_public_insert_with_real_actor_id_rejected(grants_ds):
         await db.execute_write(
             """
             insert into acl (principal_type, actor_id, group_id, resource_id, action_id)
-            values ('public', 'bob', null,
+            values ('everyone', 'bob', null,
                 (select min(id) from acl_resources),
                 (select min(id) from acl_actions))
             """
@@ -457,5 +465,16 @@ async def test_insert_grant_dedupes(grants_ds):
         )
     count = (
         await db.execute("select count(*) from acl where actor_id = 'alice'")
+    ).single_value()
+    assert count == 1
+    # Same for a public audience (covered by acl_public_unique)
+    for _ in range(2):
+        await _insert_grant(
+            db, resource_id, "everyone", None, None, "doc-view", "root"
+        )
+    count = (
+        await db.execute(
+            "select count(*) from acl where principal_type = 'everyone'"
+        )
     ).single_value()
     assert count == 1

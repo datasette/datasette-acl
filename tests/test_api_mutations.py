@@ -216,51 +216,41 @@ async def test_grant_group(api_ds):
 
 
 @pytest.mark.asyncio
-async def test_grant_wildcard_principal(api_ds):
+async def test_grant_public_audience(api_ds):
+    # A public audience is granted by principal_type alone -- no actor_id --
+    # and stored with no id.
     response = await _post(
         api_ds,
         GRANT_URL,
-        json={"actor_id": "_signed_in", "role": "Viewer"},
+        json={"principal_type": "authenticated", "role": "Viewer"},
         cookies=_root_cookie(api_ds),
     )
     data = response.json()
-    assert data["grant"]["id"] == "_signed_in"
+    assert data["grant"]["principal"] == "public"
+    assert data["grant"]["id"] == "authenticated"
     assert data["grant"]["kind"] == "public"
-    assert "display_name" not in data["grant"]
-
-
-@pytest.mark.asyncio
-async def test_grant_wildcard_without_principal_type_stores_public(api_ds):
-    # Back-compat: a body with just {"actor_id": "*"} (no principal_type, the
-    # pre-principal_type client contract) stores a 'public' row and the
-    # response kind is unchanged.
-    response = await _post(
-        api_ds,
-        GRANT_URL,
-        json={"actor_id": "*", "role": "Viewer"},
-        cookies=_root_cookie(api_ds),
-    )
-    assert response.status_code == 200
-    assert response.json()["grant"]["kind"] == "public"
+    assert data["grant"]["display_name"] == "Any signed-in user"
     rows = [
         dict(r)
         for r in (
             await api_ds.get_internal_database().execute(
-                "select principal_type, actor_id from acl"
+                "select principal_type, actor_id, group_id from acl"
             )
         ).rows
     ]
-    assert rows == [{"principal_type": "public", "actor_id": "*"}]
+    assert rows == [
+        {"principal_type": "authenticated", "actor_id": None, "group_id": None}
+    ]
 
 
 @pytest.mark.asyncio
-async def test_grant_explicit_principal_type_actor(api_ds):
-    # principal_type: "actor" pins a wildcard-named id to a real user: the
-    # stored row is 'actor' and the response kind is user, not public.
+async def test_grant_actor_with_audience_looking_id(api_ds):
+    # An actor id that merely looks like a legacy wildcard is an ordinary
+    # actor grant: the stored row is 'actor' and the response kind is user.
     response = await _post(
         api_ds,
         GRANT_URL,
-        json={"actor_id": "_signed_in", "role": "Viewer", "principal_type": "actor"},
+        json={"actor_id": "_signed_in", "role": "Viewer"},
         cookies=_root_cookie(api_ds),
     )
     assert response.status_code == 200
@@ -279,9 +269,11 @@ async def test_grant_explicit_principal_type_actor(api_ds):
 @pytest.mark.asyncio
 async def test_grant_invalid_principal_type_is_400(api_ds):
     for body in (
-        {"actor_id": "bob", "role": "Viewer", "principal_type": "public"},
+        {"actor_id": "bob", "role": "Viewer", "principal_type": "everyone"},
         {"actor_id": "bob", "role": "Viewer", "principal_type": "group"},
         {"actor_id": "bob", "role": "Viewer", "principal_type": "alien"},
+        {"role": "Viewer", "principal_type": "alien"},
+        {"group_id": 1, "role": "Viewer", "principal_type": "anonymous"},
     ):
         response = await _post(
             api_ds, GRANT_URL, json=body, cookies=_root_cookie(api_ds)

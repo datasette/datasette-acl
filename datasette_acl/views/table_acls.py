@@ -1,7 +1,7 @@
 from datasette import Response, Forbidden
 from datasette.utils import MultiParams
 from datasette_acl.utils import (
-    PUBLIC_PRINCIPALS,
+    PUBLIC_PRINCIPAL_TYPES,
     actions_for_resource_type,
     can_edit_permissions,
     generate_changes_message,
@@ -72,8 +72,8 @@ async def manage_table_acls(request, datasette):
             current_user_permissions.setdefault(row["actor_id"], {})[
                 action_name
             ] = True
-        # The legacy table page has no General-access section: 'public' rows
-        # (managed on the generic resource page) are not rendered as users.
+        # The legacy table page has no General-access section: public-audience
+        # rows (managed on the generic resource page) are not rendered as users.
 
     if request.method == "POST":
         group_changes_made = {"added": [], "removed": []}
@@ -314,7 +314,7 @@ async def manage_table_acls(request, datasette):
                 "group_sizes": group_sizes,
                 "group_permissions": current_group_permissions,
                 "user_permissions": current_user_permissions,
-                "public_principals": PUBLIC_PRINCIPALS,
+                "public_principals": PUBLIC_PRINCIPAL_TYPES,
                 "audit_log": audit_log.rows,
                 "valid_actors": await get_acl_valid_actors(datasette),
             },

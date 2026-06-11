@@ -11,12 +11,12 @@ Every mutating helper:
   * writes the ``acl`` rows, and
   * appends ``acl_audit`` entries (``operation_by`` = ``by_actor``).
 
-Principal invariant: exactly one of ``actor_id`` / ``group_id`` is set, matching
-the CHECK constraint on the ``acl`` table. Every stored row also carries an
-explicit ``principal_type`` (``'actor'`` / ``'group'`` / ``'public'``);
-:func:`principal_type_for` is the single place that resolves it, defaulting to
-inference from ``PUBLIC_PRINCIPALS`` membership for callers that do not pass
-``principal_type=`` explicitly.
+Principal invariant: a grant targets exactly one principal -- an actor
+(``actor_id=``), a group (``group_id=``), or a public audience
+(``principal_type=`` one of ``'everyone'`` / ``'authenticated'`` /
+``'anonymous'``, with no id at all) -- matching the CHECK constraint on the
+``acl`` table. :func:`principal_type_for` is the single place that resolves
+and validates the combination.
 """
 
 from __future__ import annotations
@@ -32,18 +32,23 @@ from typing import (
 )
 
 from datasette_acl.roles import actions_for_role, roles_for
-from datasette_acl.utils import PUBLIC_PRINCIPALS, actions_for_resource_type
+from datasette_acl.utils import PUBLIC_PRINCIPAL_TYPES, actions_for_resource_type
 
 if TYPE_CHECKING:
     from datasette.app import Datasette
     from datasette.database import Database
 
 
-PrincipalType = Literal["actor", "group", "public"]
+PrincipalType = Literal["actor", "group", "everyone", "authenticated", "anonymous"]
 
 
 class Grant(TypedDict):
-    """One principal's grants on a resource, as returned by :func:`list_grants`."""
+    """One principal's grants on a resource, as returned by :func:`list_grants`.
+
+    ``principal`` is the stored ``principal_type``. ``actor_id`` is set only
+    for ``actor`` grants and ``group_id``/``group_name`` only for ``group``
+    grants; public-audience grants carry no id.
+    """
 
     principal: PrincipalType
     actor_id: Optional[str]
@@ -93,39 +98,38 @@ def principal_type_for(
     group_id: Optional[int],
     principal_type: Optional[str] = None,
 ) -> PrincipalType:
-    """Resolve the ``principal_type`` for a grant's principal.
+    """Resolve and validate the ``principal_type`` for a grant's principal.
 
-    Enforces the acl CHECK invariant (exactly one of ``actor_id`` /
-    ``group_id``). ``group_id`` always means ``'group'``. For actor ids, an
-    explicit ``principal_type`` of ``'actor'`` or ``'public'`` is honored
-    (``'public'`` ids are validated against ``PUBLIC_PRINCIPALS``); when it is
-    None the type is **inferred** from ``PUBLIC_PRINCIPALS`` membership. That
-    inference is the back-compat default for callers that say
-    ``actor_id="*"`` -- it lives only here; storage is always explicit and
-    enforcement never infers. Callers that know the type should pass it.
+    A principal is exactly one of: an actor (``actor_id=``), a group
+    (``group_id=``), or a public audience (``principal_type=`` one of
+    ``PUBLIC_PRINCIPAL_TYPES``, with neither id). ``principal_type`` may also
+    redundantly name ``'actor'`` / ``'group'`` alongside the matching id.
+    Raises ``ValueError`` for any other combination, mirroring the acl table's
+    CHECK constraint.
     """
+    if principal_type in PUBLIC_PRINCIPAL_TYPES:
+        if actor_id is not None or group_id is not None:
+            raise ValueError(
+                f"principal_type {principal_type!r} cannot be combined with "
+                "actor_id= or group_id="
+            )
+        return principal_type
     if (actor_id is None) == (group_id is None):
-        raise ValueError("Provide exactly one of actor_id= or group_id=")
+        raise ValueError(
+            "Provide exactly one principal: actor_id=, group_id=, or a "
+            f"public principal_type ({', '.join(PUBLIC_PRINCIPAL_TYPES)})"
+        )
     if group_id is not None:
         if principal_type not in (None, "group"):
             raise ValueError(
                 f"principal_type {principal_type!r} cannot be used with group_id="
             )
         return "group"
-    if principal_type is None:
-        return "public" if actor_id in PUBLIC_PRINCIPALS else "actor"
-    if principal_type == "actor":
-        return "actor"
-    if principal_type == "public":
-        if actor_id not in PUBLIC_PRINCIPALS:
-            raise ValueError(
-                f"principal_type 'public' requires actor_id to be one of "
-                f"{sorted(PUBLIC_PRINCIPALS)!r}, not {actor_id!r}"
-            )
-        return "public"
-    if principal_type == "group":
-        raise ValueError("principal_type 'group' requires group_id=, not actor_id=")
-    raise ValueError(f"Invalid principal_type: {principal_type!r}")
+    if principal_type not in (None, "actor"):
+        raise ValueError(
+            f"principal_type {principal_type!r} cannot be used with actor_id="
+        )
+    return "actor"
 
 
 async def _ensure_resource_id(
@@ -169,10 +173,13 @@ async def _current_actions(
     group_id: Optional[int],
 ) -> Set[str]:
     """Return the set of action names currently granted to a principal."""
-    if actor_id is not None:
-        where = "acl.principal_type = :principal_type AND acl.actor_id = :actor_id"
+    if principal_type == "actor":
+        where = "acl.principal_type = 'actor' AND acl.actor_id = :actor_id"
+    elif principal_type == "group":
+        where = "acl.principal_type = 'group' AND acl.group_id = :group_id"
     else:
-        where = "acl.group_id = :group_id AND acl.actor_id IS NULL"
+        # Public audience: the type alone identifies the principal.
+        where = "acl.principal_type = :principal_type"
     rows = await db.execute(
         f"""
         SELECT acl_actions.name AS name
@@ -234,15 +241,13 @@ async def _delete_grant(
     action_name: str,
     by_actor: Optional[str],
 ) -> None:
-    # Constrain actor deletes by (principal_type, actor_id) so revoking the
-    # '_signed_in' wildcard can never delete a like-named user's grant, and
-    # vice versa.
-    if actor_id is not None:
-        principal_where = (
-            "principal_type = :principal_type AND actor_id = :actor_id"
-        )
+    if principal_type == "actor":
+        principal_where = "principal_type = 'actor' AND actor_id = :actor_id"
+    elif principal_type == "group":
+        principal_where = "principal_type = 'group' AND group_id = :group_id"
     else:
-        principal_where = "group_id = :group_id AND actor_id IS NULL"
+        # Public audience: the type alone identifies the principal.
+        principal_where = "principal_type = :principal_type"
     await db.execute_write(
         f"""
         DELETE FROM acl
@@ -318,17 +323,16 @@ async def grant(
     role: Optional[str] = None,
     actions: Optional[Iterable[str]] = None,
     by_actor: Optional[str] = None,
-    principal_type: Optional[Literal["actor", "public"]] = None,
+    principal_type: Optional[PrincipalType] = None,
 ) -> List[str]:
     """Grant a principal access to a resource, by role or by raw actions.
 
-    Exactly one of ``actor_id`` / ``group_id`` and exactly one of ``role`` /
-    ``actions`` must be supplied. Only actions not already granted are inserted
-    (idempotent). Returns the list of action names now held by the principal.
-
-    ``principal_type`` disambiguates an ``actor_id`` that collides with a
-    wildcard: pass ``"actor"`` to grant to a real user literally named e.g.
-    ``_signed_in``. Default None infers via :func:`principal_type_for`.
+    The principal is exactly one of ``actor_id=``, ``group_id=``, or a public
+    audience passed as ``principal_type=`` (``'everyone'`` /
+    ``'authenticated'`` / ``'anonymous'``, with neither id). Exactly one of
+    ``role`` / ``actions`` must be supplied. Only actions not already granted
+    are inserted (idempotent). Returns the list of action names now held by
+    the principal.
     """
     ptype = principal_type_for(actor_id, group_id, principal_type)
     resolved = _resolve_actions(datasette, resource_type, role, actions)
@@ -353,13 +357,12 @@ async def revoke(
     actor_id: Optional[str] = None,
     group_id: Optional[int] = None,
     by_actor: Optional[str] = None,
-    principal_type: Optional[Literal["actor", "public"]] = None,
+    principal_type: Optional[PrincipalType] = None,
 ) -> List[str]:
     """Remove all acl rows for a principal on a resource. Audits each removal.
 
-    Returns the list of action names that were removed. ``principal_type``
-    disambiguates wildcard-named actor ids as in :func:`grant`; revoking the
-    ``_signed_in`` wildcard never touches a like-named user's grants.
+    The principal is specified as in :func:`grant`. Returns the list of action
+    names that were removed.
     """
     ptype = principal_type_for(actor_id, group_id, principal_type)
     db = datasette.get_internal_database()
@@ -382,14 +385,13 @@ async def update_role(
     group_id: Optional[int] = None,
     role: str,
     by_actor: Optional[str] = None,
-    principal_type: Optional[Literal["actor", "public"]] = None,
+    principal_type: Optional[PrincipalType] = None,
 ) -> List[str]:
     """Atomically swap a principal's action set on a resource to ``role``.
 
-    Removes any currently-granted actions that are not in the new role, then
-    adds any missing ones. Audits each change. Returns the new action list.
-    ``principal_type`` disambiguates wildcard-named actor ids as in
-    :func:`grant`.
+    The principal is specified as in :func:`grant`. Removes any currently-
+    granted actions that are not in the new role, then adds any missing ones.
+    Audits each change. Returns the new action list.
     """
     ptype = principal_type_for(actor_id, group_id, principal_type)
     resolved = set(_resolve_actions(datasette, resource_type, role, None))
@@ -416,11 +418,10 @@ async def list_grants(
 ) -> List[Grant]:
     """Return the grants on a resource as a list of dicts.
 
-    Each dict is ``{"principal": "actor"|"group"|"public", "actor_id",
-    "group_id", "group_name", "actions": [...]}`` with actions sorted.
-    ``principal`` comes straight from the stored ``principal_type`` column.
-    Group grants whose group is soft-deleted are omitted. The list is ordered
-    by principal (``actor`` < ``group`` < ``public``) then id.
+    Each dict is a :class:`Grant` with actions sorted; ``principal`` comes
+    straight from the stored ``principal_type`` column. Group grants whose
+    group is soft-deleted are omitted. The list is ordered actors first, then
+    groups, then public audiences, then by id.
     """
     db = datasette.get_internal_database()
     resource_id = await _ensure_resource_id(db, resource_type, parent, child)
@@ -460,8 +461,10 @@ async def list_grants(
                 "actions": sorted(action_set),
             }
         )
+    kind_order = {"actor": 0, "group": 1}
     out.sort(
         key=lambda g: (
+            kind_order.get(g["principal"], 2),
             g["principal"],
             g["actor_id"] or "",
             g["group_id"] or 0,

@@ -23,7 +23,7 @@ This plugin is under active development. It supports configuring [permissions](h
 - `alter-table`
 - `drop-table`
 
-Grants can target individual users, [user groups](#user-groups), or [general-access wildcard principals](#principals-and-general-access) like `_signed_in`.
+Grants can target individual users, [user groups](#user-groups), or [general-access audiences](#principals-and-general-access) like "any signed-in user".
 
 Permissions are saved in the internal database. This means you should run Datasette with the `--internal path/to/internal.db` option, otherwise your permissions will be reset every time you restart Datasette.
 
@@ -35,7 +35,7 @@ The interface for configuring table permissions lives at `/database-name/table-n
 
 Permission can be granted for each of the above table actions. They can be assigned to both groups and individual users, who can be added using their `actor["id"]`.
 
-The table page does not (yet) offer the **General access** section found on the generic resource page — to grant a table action to a wildcard principal such as `_signed_in`, use the [JSON API](docs/json-api.md) or the [Python helpers](#python-api-for-managing-grants). See [Principals and general access](#principals-and-general-access).
+The table page does not (yet) offer the **General access** section found on the generic resource page — to grant a table action to a public audience such as "any signed-in user", use the [JSON API](docs/json-api.md) or the [Python helpers](#python-api-for-managing-grants). See [Principals and general access](#principals-and-general-access).
 
 An audit log tracks which permissions were added and removed, displayed at the bottom of the table permissions page.
 
@@ -78,21 +78,19 @@ Grants made here flow through Datasette's permission system: once granted, `awai
 
 ### Principals and general access
 
-Every grant names exactly one **principal**, and every stored grant records which kind it is in an explicit `principal_type` column:
+Every grant names exactly one **principal**, recorded in the `principal_type` column on each stored grant. There are five kinds — two identified by an id, and three public audiences identified by the type alone:
 
-- **`actor`** — an individual user, identified by their `actor["id"]`.
-- **`group`** — a [user group](#user-groups); the grant applies to all of its members.
-- **`public`** — one of three wildcard principals that match a *class* of caller rather than a specific person:
+| `principal_type` | Grants to | Identified by |
+| --- | --- | --- |
+| `actor` | An individual user | `actor_id` |
+| `group` | All members of a [user group](#user-groups) | `group_id` |
+| `everyone` | Anyone, signed in or not | — |
+| `authenticated` | Any signed-in actor | — |
+| `anonymous` | Signed-out (anonymous) visitors only | — |
 
-| Wildcard | Grants to |
-| --- | --- |
-| `*` | Anyone, signed in or not |
-| `_signed_in` | Any authenticated actor |
-| `_anonymous` | Signed-out (anonymous) visitors only |
+The generic resource admin page presents the three audiences as its **General access** section (labelled "Anyone (signed in or not)", "Any signed-in user" and "Signed-out (anonymous) visitors only"), and the audit log's Principal column shows the same labels. Audiences can also be granted programmatically by passing the `principal_type` to the [JSON API](docs/json-api.md) or the [Python helpers](#python-api-for-managing-grants).
 
-The generic resource admin page presents the wildcards as its **General access** section (labelled "Anyone (signed in or not)", "Any signed-in user" and "Signed-out (anonymous) visitors only"), and the audit log's Principal column shows the same labels. The wildcards can also be granted programmatically by passing the wildcard string as the `actor_id` to the [JSON API](docs/json-api.md) or the [Python helpers](#python-api-for-managing-grants).
-
-Because `principal_type` is stored explicitly, wildcard grants are distinguished from real users at the storage layer, not by string comparison. Permission checks match on `(principal_type, id)` pairs: a signed-in user whose id happens to be `_anonymous` can never inherit grants intended for signed-out visitors, and revoking a wildcard grant can never delete a like-named user's grant. Two things remain convention rather than enforcement: audit history rows written before the `principal_type` migration display wildcard-looking ids without knowing which they were, and any third-party code writing raw SQL into the `acl` table must now supply the `principal_type` column itself (use the [Python API](#python-api-for-managing-grants) instead).
+Because an audience grant stores no id at all, there is no reserved actor-id namespace: permission checks match audiences on `principal_type` alone and actors on their literal id, so no user id — however unusual — can collide with a general-access grant. One note for third-party code writing raw SQL into the `acl` table: the `principal_type` column is NOT NULL and CHECK-constrained, so such writers must supply it themselves (use the [Python API](#python-api-for-managing-grants) instead).
 
 ### Declaring roles
 
@@ -245,18 +243,14 @@ def datasette_acl_valid_actors(datasette):
 
 `datasette_acl.grants` provides async helpers so other plugins can read and modify grants without writing raw SQL against the ACL tables. Each call resolves the `(resource_type, parent, child)` resource, writes the `acl` rows, and appends audit entries attributed to `by_actor`.
 
-Provide exactly one principal (`actor_id=` or `group_id=`), and for `grant()` exactly one of `role=` or `actions=`.
-
-An `actor_id` that is one of the [wildcard principals](#principals-and-general-access) (`*`, `_signed_in`, `_anonymous`) is stored as a `public` grant by default. Pass `principal_type="actor"` to `grant()`, `update_role()` or `revoke()` to override that inference and target a real user whose id collides with a wildcard; `principal_type="public"` asserts the id must be a wildcard (anything else raises `ValueError`):
+Provide exactly one principal — `actor_id=`, `group_id=`, or a [public audience](#principals-and-general-access) as `principal_type=` — and for `grant()` exactly one of `role=` or `actions=`:
 
 ```python
-# Stored as a public grant: any signed-in user becomes a Viewer
-await grant(datasette, "doc", "doc1", actor_id="_signed_in", role="Viewer")
-# Explicit override: a real user whose id is literally "_signed_in"
-await grant(datasette, "doc", "doc1", actor_id="_signed_in", role="Viewer", principal_type="actor")
+# Any signed-in user becomes a Viewer
+await grant(datasette, "doc", "doc1", principal_type="authenticated", role="Viewer")
+# A specific user becomes an Editor
+await grant(datasette, "doc", "doc1", actor_id="alice", role="Editor")
 ```
-
-The two grants above are independent rows — revoking one never touches the other.
 
 ```python
 from datasette_acl.grants import grant, revoke, update_role, list_grants
@@ -281,7 +275,7 @@ await update_role(datasette, "doc", "doc1", actor_id="alice", role="Viewer")
 await revoke(datasette, "table", "mydb", "mytable", actor_id="alice")
 ```
 
-`list_grants(...)` — list current grants on a resource as dicts (`{"principal", "actor_id", "group_id", "group_name", "actions"}`, where `principal` is `"actor"`, `"group"` or `"public"`):
+`list_grants(...)` — list current grants on a resource as dicts (`{"principal", "actor_id", "group_id", "group_name", "actions"}`, where `principal` is the stored `principal_type`; audience grants carry no id):
 
 ```python
 grants = await list_grants(datasette, "table", "mydb", "mytable")

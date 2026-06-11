@@ -181,3 +181,18 @@ def test_standard_roles_accepts_lists_and_dedupes():
         "delete-row",
     ]
     assert roles[2].actions == roles[1].actions + ["manage-table"]
+
+
+def test_standard_roles_description_overrides():
+    roles = standard_roles(
+        "doc",
+        view="doc-view",
+        edit="doc-edit",
+        manage="doc-manage",
+        descriptions={"Viewer": "Can view the doc", "Manager": "Full control"},
+    )
+    assert [r.description for r in roles] == [
+        "Can view the doc",
+        "Can view and edit",  # no override => default kept
+        "Full control",
+    ]

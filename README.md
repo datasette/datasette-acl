@@ -109,7 +109,7 @@ def datasette_acl_roles(datasette):
     )
 ```
 
-This returns the canonical triple: **Viewer** (the `view` actions), **Editor** (`view` + `edit`) and **Manager** (`view` + `edit` + `manage`, marked as authorizing re-sharing). Each of `view=`/`edit=`/`manage=` accepts a single action name or a list:
+This returns the canonical triple: **Viewer** (the `view` actions), **Editor** (`view` + `edit`) and **Manager** (`view` + `edit` + `manage`, marked as authorizing re-sharing). Each of `view=`/`edit=`/`manage=` accepts a single action name or a list, and `descriptions=` optionally overrides the default role descriptions by role name:
 
 ```python
 standard_roles(
@@ -117,6 +117,7 @@ standard_roles(
     view="view-table",
     edit=["insert-row", "update-row", "delete-row"],
     manage="manage-table",
+    descriptions={"Manager": "Full control, including sharing"},
 )
 ```
 

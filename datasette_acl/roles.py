@@ -46,6 +46,7 @@ def standard_roles(
     view,
     edit,
     manage,
+    descriptions: Optional[Dict[str, str]] = None,
 ) -> List[AclRole]:
     """Build the canonical Viewer / Editor / Manager role triple.
 
@@ -68,13 +69,21 @@ def standard_roles(
     list of them. Bundles are cumulative (Editor includes Viewer's actions,
     Manager includes Editor's) and the Manager role carries ``manage=True``,
     so the action(s) exclusive to it authorize re-sharing (see
-    :func:`manage_only_actions`). For different role names or extra roles,
-    adjust the returned list before returning it from the hook.
+    :func:`manage_only_actions`).
+
+    ``descriptions`` optionally overrides the default role descriptions,
+    keyed by role name::
+
+        standard_roles(..., descriptions={"Manager": "Full control"})
+
+    For different role names or extra roles, adjust the returned list before
+    returning it from the hook.
     """
 
     def as_list(value):
         return [value] if isinstance(value, str) else list(value)
 
+    descriptions = descriptions or {}
     view_actions = as_list(view)
     edit_actions = view_actions + [
         a for a in as_list(edit) if a not in view_actions
@@ -88,14 +97,14 @@ def standard_roles(
             "Viewer",
             view_actions,
             rank=1,
-            description="Can view",
+            description=descriptions.get("Viewer", "Can view"),
         ),
         AclRole(
             resource_type,
             "Editor",
             edit_actions,
             rank=2,
-            description="Can view and edit",
+            description=descriptions.get("Editor", "Can view and edit"),
         ),
         AclRole(
             resource_type,
@@ -103,7 +112,9 @@ def standard_roles(
             full_actions,
             rank=3,
             manage=True,
-            description="Can view, edit and manage sharing",
+            description=descriptions.get(
+                "Manager", "Can view, edit and manage sharing"
+            ),
         ),
     ]
 

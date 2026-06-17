@@ -7,9 +7,9 @@ The group picker draws from ``acl_groups`` (active groups + member counts). The
 actor picker is a thin proxy: it delegates to the user-profiles search API
 (``GET /-/profiles/api/search``) when installed, and otherwise falls back to
 ``datasette_acl_valid_actors`` filtered by ``q`` in Python. Both endpoints gate
-on the global ``datasette-acl`` permission. Wildcard / public principals
-(``*``, ``_signed_in``, ``_anonymous``) need no write path — they are plain
-``actor_id`` strings — so they are exercised through the grant helpers in
+on the global ``datasette-acl`` permission. Public audiences (``everyone``,
+``authenticated``, ``anonymous``) need no picker — they are a fixed set named
+by ``principal_type`` — so they are exercised through the grant helpers in
 ``test_custom_resources.py`` rather than here.
 """
 

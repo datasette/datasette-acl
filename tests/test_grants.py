@@ -9,7 +9,14 @@ from datasette import hookimpl
 from datasette.app import Datasette
 from datasette.permissions import Action, Resource
 from datasette.plugins import pm
-from datasette_acl.grants import grant, revoke, update_role, list_grants
+from datasette_acl.grants import (
+    grant,
+    revoke,
+    update_role,
+    list_grants,
+    principal_type_for,
+    _insert_grant,
+)
 from datasette_acl.roles import AclRole
 from datasette_acl.utils import build_resource
 import pytest
@@ -353,3 +360,121 @@ async def test_list_grants_actor_and_group(grants_ds):
 @pytest.mark.asyncio
 async def test_list_grants_empty(grants_ds):
     assert await list_grants(grants_ds, "doc", "42") == []
+
+
+@pytest.mark.asyncio
+async def test_list_grants_public_principal_and_ordering(grants_ds):
+    # Public-audience grants come back with principal naming the audience,
+    # straight from the stored column, with no id; the list is ordered actors,
+    # then groups, then audiences.
+    gid = await _group_id(grants_ds, "staff")
+    await grant(
+        grants_ds, "doc", "42", principal_type="everyone", role="Viewer", by_actor="root"
+    )
+    await grant(grants_ds, "doc", "42", actor_id="alice", role="Editor", by_actor="root")
+    await grant(grants_ds, "doc", "42", group_id=gid, role="Viewer", by_actor="root")
+    grants = await list_grants(grants_ds, "doc", "42")
+    assert [(g["principal"], g["actor_id"], g["group_id"]) for g in grants] == [
+        ("actor", "alice", None),
+        ("group", None, gid),
+        ("everyone", None, None),
+    ]
+
+
+# --- principal_type -------------------------------------------------------
+
+
+def test_principal_type_for():
+    # Resolution from whichever id was supplied
+    assert principal_type_for("alice", None) == "actor"
+    assert principal_type_for(None, 1) == "group"
+    # Redundant explicit types are accepted alongside the matching id
+    assert principal_type_for("alice", None, "actor") == "actor"
+    assert principal_type_for(None, 1, "group") == "group"
+    # Public audiences are named by principal_type alone, with no id
+    assert principal_type_for(None, None, "everyone") == "everyone"
+    assert principal_type_for(None, None, "authenticated") == "authenticated"
+    assert principal_type_for(None, None, "anonymous") == "anonymous"
+    # Invalid combinations
+    with pytest.raises(ValueError):
+        principal_type_for("bob", None, "everyone")  # audience with actor_id
+    with pytest.raises(ValueError):
+        principal_type_for(None, 1, "anonymous")  # audience with group_id
+    with pytest.raises(ValueError):
+        principal_type_for("bob", None, "group")  # group needs group_id
+    with pytest.raises(ValueError):
+        principal_type_for(None, 1, "actor")  # group_id with actor type
+    with pytest.raises(ValueError):
+        principal_type_for("bob", None, "alien")  # unknown type
+    with pytest.raises(ValueError):
+        principal_type_for(None, None)  # no principal
+    with pytest.raises(ValueError):
+        principal_type_for(None, None, "actor")  # actor type without an id
+    with pytest.raises(ValueError):
+        principal_type_for("bob", 1)  # both ids
+
+
+@pytest.mark.asyncio
+async def test_grant_audience_with_actor_id_raises(grants_ds):
+    with pytest.raises(ValueError):
+        await grant(
+            grants_ds,
+            "doc",
+            "42",
+            actor_id="bob",
+            role="Viewer",
+            principal_type="everyone",
+        )
+
+
+@pytest.mark.asyncio
+async def test_raw_audience_insert_with_actor_id_rejected(grants_ds):
+    # The CHECK constraint is the storage-layer backstop behind the Python
+    # validation: an audience row carrying an actor_id can never be stored,
+    # even by raw SQL.
+    import sqlite3
+
+    db = grants_ds.get_internal_database()
+    with pytest.raises(sqlite3.IntegrityError):
+        await db.execute_write(
+            """
+            insert into acl (principal_type, actor_id, group_id, resource_id, action_id)
+            values ('everyone', 'bob', null,
+                (select min(id) from acl_resources),
+                (select min(id) from acl_actions))
+            """
+        )
+
+
+@pytest.mark.asyncio
+async def test_insert_grant_dedupes(grants_ds):
+    # Two identical _insert_grant calls -- bypassing grant()'s
+    # read-modify-write guard -- yield one row: the partial unique indexes
+    # actually enforce non-duplication (the old UNIQUE constraint never fired
+    # across its always-NULL columns).
+    await grant(grants_ds, "doc", "42", actor_id="alice", role="Viewer", by_actor="root")
+    db = grants_ds.get_internal_database()
+    resource_id = (
+        await db.execute(
+            "select id from acl_resources where resource_type = 'doc' and parent = '42'"
+        )
+    ).single_value()
+    for _ in range(2):
+        await _insert_grant(
+            db, resource_id, "actor", "alice", None, "doc-view", "root"
+        )
+    count = (
+        await db.execute("select count(*) from acl where actor_id = 'alice'")
+    ).single_value()
+    assert count == 1
+    # Same for a public audience (covered by acl_public_unique)
+    for _ in range(2):
+        await _insert_grant(
+            db, resource_id, "everyone", None, None, "doc-view", "root"
+        )
+    count = (
+        await db.execute(
+            "select count(*) from acl where principal_type = 'everyone'"
+        )
+    ).single_value()
+    assert count == 1

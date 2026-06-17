@@ -52,26 +52,29 @@ that contain reserved characters.
 
 ### Principals
 
-A grant attaches a set of actions on a resource to exactly **one** principal:
+A grant attaches a set of actions on a resource to exactly **one** principal,
+which takes one of three forms in a mutation body:
 
 - **Actor** — identified by a string `actor_id` (e.g. `"alice"`).
 - **Group** — identified by an integer `group_id` (the `acl_groups.id`).
+- **Public audience** — a *class* of caller rather than a specific person,
+  named by `principal_type` with **neither** id:
 
-Every mutating request must supply **exactly one** of `actor_id` / `group_id`.
-Supplying neither or both is a `400` error.
+| `principal_type` | Matches                                       |
+| ---------------- | --------------------------------------------- |
+| `everyone`       | Literally everyone, including anonymous users |
+| `authenticated`  | Any signed-in actor (has an `id`)             |
+| `anonymous`      | Only unauthenticated callers                  |
 
-**Wildcard / "public" principals.** Three reserved `actor_id` values represent
-classes of caller rather than a specific person:
+Supplying none of these forms — or more than one — is a `400` error.
+(`principal_type` may also redundantly name `"actor"` / `"group"` alongside
+the matching id.)
 
-| `actor_id`    | Matches                                       |
-| ------------- | --------------------------------------------- |
-| `*`           | Literally everyone, including anonymous users |
-| `_signed_in`  | Any authenticated actor (has an `id`)         |
-| `_anonymous`  | Only unauthenticated callers                  |
-
-These are stored as ordinary actor grants but are flagged `"kind": "public"` in
-responses and are never run through actor enrichment (no display name / email /
-avatar).
+Audience grants store no id at all, so there is no reserved actor-id
+namespace: enforcement matches audiences on `principal_type` alone and actors
+on their literal id, and an actor named e.g. `_signed_in` is just an ordinary
+actor. In responses audiences are flagged `"kind": "public"` and are never run
+through actor enrichment (their `display_name` is the fixed UI label).
 
 ### Roles vs. actions
 
@@ -108,11 +111,10 @@ Read and mutation responses describe a principal's grant with the same shape.
 
 - `actions` is always sorted.
 - `role` is the resolved role name, or `null` if no role matches.
-- `kind` is `"public"` for wildcard principals; otherwise it is taken from the
-  actor-resolution layer (`actors_from_ids`, e.g. `"user"`, `"agent"`),
-  defaulting to `"user"`.
+- `kind` is taken from the actor-resolution layer (`actors_from_ids`, e.g.
+  `"user"`, `"agent"`), defaulting to `"user"`.
 - `display_name`, `email`, `avatar_url` are present only when the actor-
-  resolution layer supplies them (so wildcard and unknown actors omit them).
+  resolution layer supplies them (so unknown actors omit them).
 
 **Group entry:**
 
@@ -132,6 +134,23 @@ Read and mutation responses describe a principal's grant with the same shape.
 - `kind` is always `"group"`.
 - `display_name` is the group name; `member_count` is the number of actors in
   the group.
+
+**Public (audience) entry:**
+
+```json
+{
+  "principal": "public",
+  "id": "authenticated",
+  "role": "Viewer",
+  "actions": ["doc-view"],
+  "kind": "public",
+  "display_name": "Any signed-in user"
+}
+```
+
+- `id` echoes the audience's `principal_type` (audiences have no stored id).
+- `display_name` is the fixed UI label; audiences are never enriched (no
+  `email` / `avatar_url`).
 
 ---
 
@@ -296,8 +315,9 @@ principal's full action-set after the grant.
 
 | Field      | Type            | Notes                                                |
 | ---------- | --------------- | ---------------------------------------------------- |
-| `actor_id` | string          | Supply this **or** `group_id`, not both.             |
-| `group_id` | integer         | Supply this **or** `actor_id`, not both.             |
+| `actor_id` | string          | An individual actor. One principal form of three.    |
+| `group_id` | integer         | A group. One principal form of three.                |
+| `principal_type` | string    | A public audience: `"everyone"` / `"authenticated"` / `"anonymous"`, with neither id (see [Principals](#principals)). |
 | `role`     | string          | A role name for this resource type. Expands to its actions. Supply this **or** `actions`. |
 | `actions`  | array of string | Raw action names. Supply this **or** `role`.         |
 
@@ -348,8 +368,9 @@ audited. Returns the enriched grant.
 
 | Field      | Type    | Notes                                    |
 | ---------- | ------- | ---------------------------------------- |
-| `actor_id` | string  | Supply this **or** `group_id`.           |
-| `group_id` | integer | Supply this **or** `actor_id`.           |
+| `actor_id` | string  | An individual actor. One principal form of three. |
+| `group_id` | integer | A group. One principal form of three.    |
+| `principal_type` | string | A public audience, with neither id (see [Principals](#principals)). |
 | `role`     | string  | Required. The role to swap the principal to. |
 
 ```json
@@ -380,8 +401,9 @@ Removes **all** grants for a principal on the resource. Each removal is audited
 
 | Field      | Type    | Notes                          |
 | ---------- | ------- | ------------------------------ |
-| `actor_id` | string  | Supply this **or** `group_id`. |
-| `group_id` | integer | Supply this **or** `actor_id`. |
+| `actor_id` | string  | An individual actor. One principal form of three. |
+| `group_id` | integer | A group. One principal form of three. |
+| `principal_type` | string | A public audience, with neither id (see [Principals](#principals)). |
 
 ```json
 { "actor_id": "bob" }
@@ -519,13 +541,18 @@ curl -s -X POST 'https://example.org/-/acl/api/resource/mock-doc/42/grant' \
   -d '{"group_id": 7, "actions": ["doc-view"]}'
 ```
 
-Make the document public to signed-in users:
+Make the document public to signed-in users — the `authenticated` audience is
+named by `principal_type`, with no id:
 
 ```bash
 curl -s -X POST 'https://example.org/-/acl/api/resource/mock-doc/42/grant' \
   -H 'Cookie: ds_actor=...' \
   -H 'Content-Type: application/json' \
-  -d '{"actor_id": "_signed_in", "role": "Viewer"}'
+  -d '{"principal_type": "authenticated", "role": "Viewer"}'
+# -> {"ok": true, "grant": {"principal":"public","id":"authenticated",
+#                           "role":"Viewer","actions":["doc-view"],
+#                           "kind":"public",
+#                           "display_name":"Any signed-in user"}}
 ```
 
 Revoke `bob` entirely:

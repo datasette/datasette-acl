@@ -1,5 +1,5 @@
 """
-Tests for the friendly-roles layer: the datasette_acl_roles hook, the startup
+Tests for the friendly-roles layer: the datasette_acl_roles hook, the
 registry keyed by resource_type, and the role<->action resolution helpers.
 """
 
@@ -9,6 +9,7 @@ from datasette.permissions import Action, Resource
 from datasette.plugins import pm
 from datasette_acl.roles import (
     AclRole,
+    build_roles_registry,
     role_for_actions,
     actions_for_role,
     manage_actions,
@@ -76,7 +77,7 @@ async def doc_ds():
 
 @pytest.mark.asyncio
 async def test_registry_built_and_grouped_by_resource_type(doc_ds):
-    registry = doc_ds._acl_roles_registry
+    registry = build_roles_registry(doc_ds)
     assert set(registry.keys()) == {"mock-doc"}
     roles = registry["mock-doc"]
     # All three roles present, sorted by rank ascending

@@ -2,9 +2,9 @@
 
 acl stores per-action grants, but users think in roles (Viewer / Editor /
 Manager). Plugins declare roles for their resource types via the
-``datasette_acl_roles`` hook; they are collected at startup into a registry
-keyed by ``resource_type``. Helpers resolve a granted action-set to its
-best-matching role and back.
+``datasette_acl_roles`` hook; :func:`roles_for` gathers them on demand into a
+registry keyed by ``resource_type``. Helpers resolve a granted action-set to
+its best-matching role and back.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
 from datasette.plugins import pm
-from datasette.utils import await_me_maybe
 
 if TYPE_CHECKING:
     from datasette.app import Datasette
@@ -119,17 +118,16 @@ def standard_roles(
     ]
 
 
-async def build_roles_registry(datasette) -> Dict[str, List[AclRole]]:
+def build_roles_registry(datasette) -> Dict[str, List[AclRole]]:
     """Gather declared roles into ``{resource_type: [AclRole, ...]}``.
 
-    Calls the ``datasette_acl_roles`` hook across all plugins, awaiting any
-    callables/awaitables they return, and groups the resulting AclRole objects
-    by ``resource_type``. Within each resource type the roles are sorted by
-    ``rank`` ascending (so the highest-rank role is last) for stable ordering.
+    Calls the ``datasette_acl_roles`` hook across all plugins and groups the
+    resulting AclRole objects by ``resource_type``. Within each resource type
+    the roles are sorted by ``rank`` ascending (so the highest-rank role is
+    last) for stable ordering.
     """
     registry: Dict[str, List[AclRole]] = {}
-    for hook_result in pm.hook.datasette_acl_roles(datasette=datasette):
-        roles = await await_me_maybe(hook_result)
+    for roles in pm.hook.datasette_acl_roles(datasette=datasette):
         if not roles:
             continue
         for role in roles:
@@ -142,13 +140,11 @@ async def build_roles_registry(datasette) -> Dict[str, List[AclRole]]:
 def roles_for(datasette: Datasette, resource_type: str) -> List[AclRole]:
     """Return the registered roles for ``resource_type`` (``[]`` if none).
 
-    Reads the registry cached on the Datasette instance at startup by
-    :func:`build_roles_registry` (see ``datasette_acl.startup``). Shared by the
-    grants layer and the JSON API so neither pokes ``_acl_roles_registry``
-    directly.
+    Gathers roles from the ``datasette_acl_roles`` hook on demand via
+    :func:`build_roles_registry`. Shared by the grants layer and the JSON API
+    as the single way to ask "what roles exist for this resource type?".
     """
-    registry = getattr(datasette, "_acl_roles_registry", None) or {}
-    return registry.get(resource_type, [])
+    return build_roles_registry(datasette).get(resource_type, [])
 
 
 def role_for_actions(

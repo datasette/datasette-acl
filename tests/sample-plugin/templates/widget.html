@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}Widget: {{ widget.name }}{% endblock %}
+
+{% block content %}
+<p><a href="{{ urls.path("/-/widgets") }}">&larr; All widgets</a></p>
+
+<h1>{{ widget.name }}</h1>
+
+<p>
+  Created by {{ widget.creator_name }} on {{ widget.created_at }}.
+  Your role: <strong>{{ role }}</strong>
+</p>
+
+{% if can_edit %}
+  <form action="{{ request.path }}" method="post" style="margin-bottom: 1em">
+    <input data-1p-ignore name="name" value="{{ widget.name }}" required>
+    <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+    <input type="submit" value="Rename" class="core">
+  </form>
+{% endif %}
+
+{% if can_manage %}
+  <p><a href="{{ acl_url }}">Manage permissions</a> — share this widget with
+  other actors, groups, or expose it via General access.</p>
+{% endif %}
+{% endblock %}

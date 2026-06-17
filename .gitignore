@@ -10,3 +10,6 @@ venv
 .vscode
 dist
 build
+tmp.db
+internal.db
+uv.lock

@@ -8,7 +8,7 @@ from datasette import hookimpl
 from datasette.app import Datasette
 from datasette.permissions import Action, Resource
 from datasette.plugins import pm
-from datasette_acl.grants import grant, revoke
+from datasette_acl.grants import grant, revoke, Principal
 import pytest
 import pytest_asyncio
 
@@ -320,7 +320,7 @@ async def test_actor_grant_with_legacy_wildcard_looking_id(widget_ds):
         "widget",
         "shelf",
         "gadget",
-        actor_id="_anonymous",
+        principal=Principal.actor("_anonymous"),
         actions=["widget-view"],
         by_actor="root",
     )
@@ -346,7 +346,7 @@ async def test_public_and_actor_grants_coexist(widget_ds):
         "widget",
         "shelf",
         "gadget",
-        principal_type="anonymous",
+        principal=Principal.anonymous(),
         actions=["widget-view"],
         by_actor="root",
     )
@@ -355,7 +355,7 @@ async def test_public_and_actor_grants_coexist(widget_ds):
         "widget",
         "shelf",
         "gadget",
-        actor_id="_anonymous",
+        principal=Principal.actor("_anonymous"),
         actions=["widget-view"],
         by_actor="root",
     )
@@ -375,7 +375,7 @@ async def test_public_and_actor_grants_coexist(widget_ds):
         "widget",
         "shelf",
         "gadget",
-        principal_type="anonymous",
+        principal=Principal.anonymous(),
         by_actor="root",
     )
     assert not await widget_ds.allowed(
@@ -390,7 +390,7 @@ async def test_public_and_actor_grants_coexist(widget_ds):
         "widget",
         "shelf",
         "gadget",
-        actor_id="_anonymous",
+        principal=Principal.actor("_anonymous"),
         by_actor="root",
     )
     assert not await widget_ds.allowed(

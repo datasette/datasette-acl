@@ -49,7 +49,7 @@ from datasette_acl.grants import (
     revoke,
     update_role,
     list_grants,
-    principal_type_for,
+    Principal,
 )
 from datasette_acl.roles import role_for_actions, roles_for
 from datasette_acl.utils import (
@@ -202,22 +202,18 @@ async def _group_grant_entry(datasette, roles, group_id, actions):
     return _group_entry(group_id, role, actions, info)
 
 
-def _principal_from_body(body):
-    """Extract ``(actor_id, group_id, principal_type)`` from a request body.
+def _principal_from_body(body) -> Principal:
+    """Build a :class:`Principal` from a request body.
 
     The principal is exactly one of ``actor_id``, ``group_id``, or a public
     audience named by ``principal_type`` (``"everyone"`` / ``"authenticated"``
     / ``"anonymous"`` with neither id). Raises ``ValueError`` for invalid
-    combinations (via :func:`principal_type_for`) so handlers can translate it
-    to a 400.
+    combinations (via :meth:`Principal.from_parts`) so handlers can translate
+    it to a 400.
     """
-    actor_id = body.get("actor_id")
-    group_id = body.get("group_id")
-    principal_type = body.get("principal_type")
-    # Validates the combination eagerly (exactly-one principal, no audience
-    # alongside an id, no 'group' alongside actor_id).
-    principal_type_for(actor_id, group_id, principal_type)
-    return actor_id, group_id, principal_type
+    return Principal.from_parts(
+        body.get("actor_id"), body.get("group_id"), body.get("principal_type")
+    )
 
 
 def _parse_json_body(request_body):
@@ -233,16 +229,18 @@ def _parse_json_body(request_body):
     return data
 
 
-async def _enriched_grant(
-    datasette, roles, actor_id, group_id, actions, principal_type=None
-):
+async def _enriched_grant(datasette, roles, principal: Principal, actions):
     """Build the enriched grant entry for whichever principal was supplied."""
-    if actor_id is not None:
-        return await _actor_grant_entry(datasette, roles, actor_id, actions)
-    if group_id is not None:
-        return await _group_grant_entry(datasette, roles, group_id, actions)
+    if principal.principal_type == "actor":
+        return await _actor_grant_entry(
+            datasette, roles, principal.actor_id, actions
+        )
+    if principal.principal_type == "group":
+        return await _group_grant_entry(
+            datasette, roles, principal.group_id, actions
+        )
     role = role_for_actions(roles, set(actions))
-    return _public_entry(principal_type, role, actions)
+    return _public_entry(principal.principal_type, role, actions)
 
 
 async def resource_grants_json(request, datasette):
@@ -379,27 +377,23 @@ async def grant_json(request, datasette):
         resource_type, parent, child, roles, body = await _begin_mutation(
             request, datasette
         )
-        actor_id, group_id, principal_type = _principal_from_body(body)
+        principal = _principal_from_body(body)
         by_actor = (request.actor or {}).get("id")
         actions = await grant(
             datasette,
             resource_type,
             parent,
             child,
-            actor_id=actor_id,
-            group_id=group_id,
+            principal=principal,
             role=body.get("role"),
             actions=body.get("actions"),
             by_actor=by_actor,
-            principal_type=principal_type,
         )
     except _ApiError as exc:
         return _error_response(exc)
     except ValueError as exc:
         return _error_response(_ApiError(400, str(exc)))
-    entry = await _enriched_grant(
-        datasette, roles, actor_id, group_id, actions, principal_type
-    )
+    entry = await _enriched_grant(datasette, roles, principal, actions)
     return Response.json({"ok": True, "grant": entry})
 
 
@@ -566,17 +560,15 @@ async def revoke_json(request, datasette):
         resource_type, parent, child, roles, body = await _begin_mutation(
             request, datasette
         )
-        actor_id, group_id, principal_type = _principal_from_body(body)
+        principal = _principal_from_body(body)
         by_actor = (request.actor or {}).get("id")
         removed = await revoke(
             datasette,
             resource_type,
             parent,
             child,
-            actor_id=actor_id,
-            group_id=group_id,
+            principal=principal,
             by_actor=by_actor,
-            principal_type=principal_type,
         )
     except _ApiError as exc:
         return _error_response(exc)
@@ -597,7 +589,7 @@ async def update_json(request, datasette):
         resource_type, parent, child, roles, body = await _begin_mutation(
             request, datasette
         )
-        actor_id, group_id, principal_type = _principal_from_body(body)
+        principal = _principal_from_body(body)
         role = body.get("role")
         if not role:
             raise _ApiError(400, "update requires a role")
@@ -607,17 +599,13 @@ async def update_json(request, datasette):
             resource_type,
             parent,
             child,
-            actor_id=actor_id,
-            group_id=group_id,
+            principal=principal,
             role=role,
             by_actor=by_actor,
-            principal_type=principal_type,
         )
     except _ApiError as exc:
         return _error_response(exc)
     except ValueError as exc:
         return _error_response(_ApiError(400, str(exc)))
-    entry = await _enriched_grant(
-        datasette, roles, actor_id, group_id, actions, principal_type
-    )
+    entry = await _enriched_grant(datasette, roles, principal, actions)
     return Response.json({"ok": True, "grant": entry})

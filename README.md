@@ -221,32 +221,37 @@ def datasette_acl_valid_actors(datasette):
 
 `datasette_acl.grants` provides async helpers so other plugins can read and modify grants without writing raw SQL against the ACL tables. Each call resolves the `(resource_type, parent, child)` resource, writes the `acl` rows, and appends audit entries attributed to `by_actor`.
 
-Provide exactly one principal (`actor_id=` or `group_id=`), and for `grant()` exactly one of `role=` or `actions=`.
+The principal — who a grant targets — is a `Principal` value object, built via one of its constructors: `Principal.actor(id)`, `Principal.group(id)`, or a [public audience](#principals-and-general-access) `Principal.everyone()` / `Principal.authenticated()` / `Principal.anonymous()`. Pass it as `principal=`, and for `grant()` supply exactly one of `role=` or `actions=`:
 
 ```python
-from datasette_acl.grants import grant, revoke, update_role, list_grants
+from datasette_acl.grants import grant, revoke, update_role, list_grants, Principal
+
+# Any signed-in user becomes a Viewer
+await grant(datasette, "doc", "doc1", principal=Principal.authenticated(), role="Viewer")
+# A specific user becomes an Editor
+await grant(datasette, "doc", "doc1", principal=Principal.actor("alice"), role="Editor")
 ```
 
 `grant(...)` — give a principal access, by raw actions or by a role (idempotent). Returns the actions now held. Role names come from the `datasette_acl_roles` hook:
 
 ```python
-await grant(datasette, "table", "mydb", "mytable", actor_id="alice", actions=["insert-row"])
-await grant(datasette, "table", "mydb", "mytable", group_id=3, actions=["insert-row"], by_actor="root")
+await grant(datasette, "table", "mydb", "mytable", principal=Principal.actor("alice"), actions=["insert-row"])
+await grant(datasette, "table", "mydb", "mytable", principal=Principal.group(3), actions=["insert-row"], by_actor="root")
 ```
 
 `update_role(...)` — atomically swap a principal's actions to exactly those of a registered `role`. Returns the new actions:
 
 ```python
-await update_role(datasette, "doc", "doc1", actor_id="alice", role="Viewer")
+await update_role(datasette, "doc", "doc1", principal=Principal.actor("alice"), role="Viewer")
 ```
 
 `revoke(...)` — remove all of a principal's grants on a resource. Returns the actions that were removed:
 
 ```python
-await revoke(datasette, "table", "mydb", "mytable", actor_id="alice")
+await revoke(datasette, "table", "mydb", "mytable", principal=Principal.actor("alice"))
 ```
 
-`list_grants(...)` — list current grants on a resource as dicts (`{"principal", "actor_id", "group_id", "group_name", "actions"}`):
+`list_grants(...)` — list current grants on a resource as dicts (`{"principal", "actor_id", "group_id", "group_name", "actions"}`, where `principal` is the stored `principal_type`; audience grants carry no id):
 
 ```python
 grants = await list_grants(datasette, "table", "mydb", "mytable")

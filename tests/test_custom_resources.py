@@ -8,6 +8,7 @@ from datasette import hookimpl
 from datasette.app import Datasette
 from datasette.permissions import Action, Resource
 from datasette.plugins import pm
+from datasette_acl.grants import grant, revoke
 import pytest
 import pytest_asyncio
 
@@ -87,20 +88,64 @@ async def _upsert_resource_id(db, resource_type, parent, child):
     )
 
 
-async def _grant_actor(datasette, *, actor_id, resource_type, parent, child, action):
+async def _grant_actor(
+    datasette,
+    *,
+    actor_id,
+    resource_type,
+    parent,
+    child,
+    action,
+):
     db = datasette.get_internal_database()
     resource_id = await _upsert_resource_id(db, resource_type, parent, child)
     await db.execute_write(
         """
-        INSERT INTO acl (actor_id, group_id, resource_id, action_id)
+        INSERT INTO acl (principal_type, actor_id, group_id, resource_id, action_id)
         VALUES (
+            'actor',
             :actor_id,
             null,
             :resource_id,
             (SELECT id FROM acl_actions WHERE name = :action)
         )
         """,
-        {"actor_id": actor_id, "resource_id": resource_id, "action": action},
+        {
+            "actor_id": actor_id,
+            "resource_id": resource_id,
+            "action": action,
+        },
+    )
+
+
+async def _grant_public(
+    datasette,
+    *,
+    principal_type,
+    resource_type,
+    parent,
+    child,
+    action,
+):
+    # Public audiences are identified by principal_type alone -- no id.
+    db = datasette.get_internal_database()
+    resource_id = await _upsert_resource_id(db, resource_type, parent, child)
+    await db.execute_write(
+        """
+        INSERT INTO acl (principal_type, actor_id, group_id, resource_id, action_id)
+        VALUES (
+            :principal_type,
+            null,
+            null,
+            :resource_id,
+            (SELECT id FROM acl_actions WHERE name = :action)
+        )
+        """,
+        {
+            "principal_type": principal_type,
+            "resource_id": resource_id,
+            "action": action,
+        },
     )
 
 
@@ -119,8 +164,9 @@ async def _grant_group(datasette, *, group_name, resource_type, parent, child, a
     resource_id = await _upsert_resource_id(db, resource_type, parent, child)
     await db.execute_write(
         """
-        INSERT INTO acl (actor_id, group_id, resource_id, action_id)
+        INSERT INTO acl (principal_type, actor_id, group_id, resource_id, action_id)
         VALUES (
+            'group',
             null,
             :group_id,
             :resource_id,
@@ -205,11 +251,11 @@ async def test_resource_type_does_not_leak(widget_ds):
 
 
 @pytest.mark.asyncio
-async def test_signed_in_wildcard_grant(widget_ds):
-    # Grant _signed_in => any actor with an id is allowed, anonymous is not
-    await _grant_actor(
+async def test_authenticated_public_grant(widget_ds):
+    # 'authenticated' => any actor with an id is allowed, anonymous is not
+    await _grant_public(
         widget_ds,
-        actor_id="_signed_in",
+        principal_type="authenticated",
         resource_type="widget",
         parent="shelf",
         child="gadget",
@@ -225,11 +271,11 @@ async def test_signed_in_wildcard_grant(widget_ds):
 
 
 @pytest.mark.asyncio
-async def test_star_wildcard_grant(widget_ds):
-    # Grant '*' => literally anyone, including anonymous
-    await _grant_actor(
+async def test_everyone_public_grant(widget_ds):
+    # 'everyone' => literally anyone, including anonymous
+    await _grant_public(
         widget_ds,
-        actor_id="*",
+        principal_type="everyone",
         resource_type="widget",
         parent="shelf",
         child="gadget",
@@ -245,12 +291,12 @@ async def test_star_wildcard_grant(widget_ds):
 
 
 @pytest.mark.asyncio
-async def test_anonymous_wildcard_grant(widget_ds):
-    # Grant '_anonymous' => only unauthenticated callers; a signed-in actor is not
+async def test_anonymous_public_grant(widget_ds):
+    # 'anonymous' => only unauthenticated callers; a signed-in actor is not
     # matched by this grant.
-    await _grant_actor(
+    await _grant_public(
         widget_ds,
-        actor_id="_anonymous",
+        principal_type="anonymous",
         resource_type="widget",
         parent="shelf",
         child="gadget",
@@ -262,6 +308,93 @@ async def test_anonymous_wildcard_grant(widget_ds):
     )
     assert not await widget_ds.allowed(
         action="widget-view", resource=resource, actor={"id": "anyone"}
+    )
+@pytest.mark.asyncio
+async def test_actor_grant_with_legacy_wildcard_looking_id(widget_ds):
+    # An actor whose id happens to look like an old wildcard is just an
+    # ordinary actor: the grant allows exactly that signed-in user and never
+    # anonymous callers.
+    resource = WidgetResource("shelf", "gadget")
+    await grant(
+        widget_ds,
+        "widget",
+        "shelf",
+        "gadget",
+        actor_id="_anonymous",
+        actions=["widget-view"],
+        by_actor="root",
+    )
+    assert await widget_ds.allowed(
+        action="widget-view", resource=resource, actor={"id": "_anonymous"}
+    )
+    assert not await widget_ds.allowed(
+        action="widget-view", resource=resource, actor=None
+    )
+    assert not await widget_ds.allowed(
+        action="widget-view", resource=resource, actor={"id": "someone-else"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_public_and_actor_grants_coexist(widget_ds):
+    # An 'anonymous' audience grant and an actor grant for a user literally
+    # named '_anonymous' are distinct rows: each matches only its own
+    # audience, and revoking one leaves the other.
+    resource = WidgetResource("shelf", "gadget")
+    await grant(
+        widget_ds,
+        "widget",
+        "shelf",
+        "gadget",
+        principal_type="anonymous",
+        actions=["widget-view"],
+        by_actor="root",
+    )
+    await grant(
+        widget_ds,
+        "widget",
+        "shelf",
+        "gadget",
+        actor_id="_anonymous",
+        actions=["widget-view"],
+        by_actor="root",
+    )
+    assert await widget_ds.allowed(
+        action="widget-view", resource=resource, actor=None
+    )
+    assert await widget_ds.allowed(
+        action="widget-view", resource=resource, actor={"id": "_anonymous"}
+    )
+    # Other signed-in users match neither row
+    assert not await widget_ds.allowed(
+        action="widget-view", resource=resource, actor={"id": "someone-else"}
+    )
+    # Revoking the audience leaves the actor's grant intact...
+    await revoke(
+        widget_ds,
+        "widget",
+        "shelf",
+        "gadget",
+        principal_type="anonymous",
+        by_actor="root",
+    )
+    assert not await widget_ds.allowed(
+        action="widget-view", resource=resource, actor=None
+    )
+    assert await widget_ds.allowed(
+        action="widget-view", resource=resource, actor={"id": "_anonymous"}
+    )
+    # ...and vice versa.
+    await revoke(
+        widget_ds,
+        "widget",
+        "shelf",
+        "gadget",
+        actor_id="_anonymous",
+        by_actor="root",
+    )
+    assert not await widget_ds.allowed(
+        action="widget-view", resource=resource, actor={"id": "_anonymous"}
     )
 
 
@@ -384,8 +517,6 @@ async def test_generic_resource_view_grants_via_post(widget_ds):
     assert not await widget_ds.allowed(
         action="widget-view", resource=resource, actor=actor
     )
-
-
 @pytest.mark.asyncio
 async def test_generic_resource_view_revokes_via_post(widget_ds):
     actor = {"id": "alice"}

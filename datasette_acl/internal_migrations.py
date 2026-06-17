@@ -15,11 +15,14 @@ internal_migrations = Migrations("datasette-acl.internal")
 @internal_migrations()
 def m001_initial(db: Database):
     db.executescript("""
+    -- Resources are identified by (resource_type, parent, child); a table is
+    -- ('table', database, table_name), other resource types use what they need.
     create table if not exists acl_resources (
         id integer primary key,
-        database text not null,
-        resource text,
-        unique(database, resource)
+        resource_type text not null,
+        parent text not null,
+        child text,
+        unique(resource_type, parent, child)
     );
 
     create table if not exists acl_actions (
@@ -27,14 +30,13 @@ def m001_initial(db: Database):
         name text not null unique
     );
 
-    -- new table for groups
     create table if not exists acl_groups (
         id integer primary key,
         name text not null unique,
         deleted integer
     );
 
-    -- new table for actor-group relationships
+    -- actor-group membership
     create table if not exists acl_actor_groups (
         actor_id text,
         group_id integer,
@@ -42,7 +44,7 @@ def m001_initial(db: Database):
         foreign key (group_id) references acl_groups(id)
     );
 
-    -- Group membership audit log
+    -- group membership audit log
     create table if not exists acl_groups_audit (
         id integer primary key,
         timestamp text default (datetime('now')),
@@ -53,18 +55,45 @@ def m001_initial(db: Database):
         foreign key (group_id) references acl_groups(id)
     );
 
+    -- A grant's audience is named entirely by principal_type:
+    --   'actor'         -> a specific actor_id
+    --   'group'         -> a specific group_id
+    --   'everyone'      -> any caller, signed in or not (no id)
+    --   'authenticated' -> any signed-in caller (no id)
+    --   'anonymous'     -> signed-out callers only (no id)
+    -- The CHECK pins which of actor_id / group_id may be set for each type.
     create table if not exists acl (
         acl_id integer primary key,
+        principal_type text not null
+            check (principal_type in (
+                'actor', 'group', 'everyone', 'authenticated', 'anonymous'
+            )),
         actor_id text,
         group_id integer,
-        resource_id integer,
-        action_id integer,
+        resource_id integer not null,
+        action_id integer not null,
         foreign key (group_id) references acl_groups(id),
         foreign key (resource_id) references acl_resources(id),
         foreign key (action_id) references acl_actions(id),
-        check ((actor_id is null) != (group_id is null)),
-        unique(actor_id, group_id, resource_id, action_id)
+        check (
+            (principal_type = 'actor' and actor_id is not null and group_id is null)
+            or (principal_type = 'group' and group_id is not null and actor_id is null)
+            or (principal_type in ('everyone', 'authenticated', 'anonymous')
+                and actor_id is null and group_id is null)
+        )
     );
+    -- Partial unique indexes dedupe per principal kind (a plain UNIQUE across
+    -- the nullable principal columns wouldn't fire, since SQLite treats NULLs
+    -- as distinct).
+    create unique index acl_actor_unique
+        on acl (actor_id, resource_id, action_id)
+        where actor_id is not null;
+    create unique index acl_group_unique
+        on acl (group_id, resource_id, action_id)
+        where group_id is not null;
+    create unique index acl_public_unique
+        on acl (principal_type, resource_id, action_id)
+        where actor_id is null and group_id is null;
 
     -- ACL audit log
     create table if not exists acl_audit (
@@ -72,6 +101,7 @@ def m001_initial(db: Database):
         timestamp text default (datetime('now')),
         operation_by text,
         operation text check (operation in ('added', 'removed')),
+        principal_type text,
         action_id integer,
         resource_id integer,
         group_id integer,
@@ -80,25 +110,4 @@ def m001_initial(db: Database):
         foreign key (resource_id) references acl_resources(id),
         foreign key (action_id) references acl_actions(id)
     );
-    """)
-
-
-@internal_migrations()
-def m002_generalize_acl_resources(db: Database):
-    # Generalize acl_resources from the table-only (database, resource) shape to
-    # (resource_type, parent, child) so any resource type can be tracked.
-    # Existing rows are tables, so backfill resource_type='table', preserving
-    # ids. SQLite can't rename/retype columns in place, so rewrite the table.
-    db.executescript("""
-    ALTER TABLE acl_resources RENAME TO acl_resources_old;
-    CREATE TABLE acl_resources (
-        id integer primary key,
-        resource_type text not null,
-        parent text not null,
-        child text,
-        unique(resource_type, parent, child)
-    );
-    INSERT INTO acl_resources (id, resource_type, parent, child)
-        SELECT id, 'table', database, resource FROM acl_resources_old;
-    DROP TABLE acl_resources_old;
     """)

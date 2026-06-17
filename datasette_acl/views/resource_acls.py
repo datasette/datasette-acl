@@ -62,6 +62,7 @@ async def manage_resource_acls(request, datasette):
     acl_rows = await internal_db.execute(
         """
         select
+          acl.principal_type,
           acl_groups.name as group_name,
           acl.actor_id,
           acl_actions.name as action_name
@@ -73,14 +74,17 @@ async def manage_resource_acls(request, datasette):
         [resource_id],
     )
     for row in acl_rows.rows:
-        group_name = row["group_name"]
-        actor_id = row["actor_id"]
         action_name = row["action_name"]
-        if group_name:
-            current_group_permissions.setdefault(group_name, {})[action_name] = True
-        else:
-            assert actor_id
-            current_user_permissions.setdefault(actor_id, {})[action_name] = True
+        principal_type = row["principal_type"]
+        if principal_type == "group":
+            current_group_permissions.setdefault(row["group_name"], {})[
+                action_name
+            ] = True
+        elif principal_type == "actor":
+            current_user_permissions.setdefault(row["actor_id"], {})[
+                action_name
+            ] = True
+        # Public-audience rows are not surfaced by this view.
 
     if request.method == "POST":
         group_changes_made = {"added": [], "removed": []}
@@ -101,8 +105,9 @@ async def manage_resource_acls(request, datasette):
                     if new_value:
                         await internal_db.execute_write(
                             """
-                            INSERT INTO acl (actor_id, group_id, resource_id, action_id)
+                            INSERT INTO acl (principal_type, actor_id, group_id, resource_id, action_id)
                             VALUES (
+                                'group',
                                 null,
                                 (SELECT id FROM acl_groups WHERE name = :group_name),
                                 :resource_id,
@@ -138,6 +143,7 @@ async def manage_resource_acls(request, datasette):
                         """
                         insert into acl_audit (
                             operation,
+                            principal_type,
                             actor_id,
                             group_id,
                             resource_id,
@@ -145,6 +151,7 @@ async def manage_resource_acls(request, datasette):
                             operation_by
                         ) values (
                             :operation,
+                            'group',
                             null,
                             (SELECT id FROM acl_groups WHERE name = :group_name),
                             :resource_id,
@@ -186,8 +193,9 @@ async def manage_resource_acls(request, datasette):
                     if new_value:
                         await internal_db.execute_write(
                             """
-                            insert into acl (actor_id, group_id, resource_id, action_id)
+                            insert into acl (principal_type, actor_id, group_id, resource_id, action_id)
                             values (
+                                'actor',
                                 :actor_id,
                                 null,
                                 :resource_id,
@@ -206,8 +214,8 @@ async def manage_resource_acls(request, datasette):
                         await internal_db.execute_write(
                             """
                             delete from acl where
-                                actor_id = :actor_id
-                                and group_id is null
+                                principal_type = 'actor'
+                                and actor_id = :actor_id
                                 and resource_id = :resource_id
                                 and action_id = (select id from acl_actions where name = :action_name)
                             """,
@@ -223,6 +231,7 @@ async def manage_resource_acls(request, datasette):
                         """
                         insert into acl_audit (
                             operation,
+                            principal_type,
                             actor_id,
                             group_id,
                             resource_id,
@@ -230,6 +239,7 @@ async def manage_resource_acls(request, datasette):
                             operation_by
                         ) values (
                             :operation,
+                            'actor',
                             :actor_id,
                             null,
                             :resource_id,
@@ -262,6 +272,7 @@ async def manage_resource_acls(request, datasette):
             acl_audit.timestamp,
             acl_audit.operation_by,
             acl_audit.operation,
+            acl_audit.principal_type,
             acl_audit.actor_id,
             acl_groups.name as group_name,
             acl_actions.name as action_name

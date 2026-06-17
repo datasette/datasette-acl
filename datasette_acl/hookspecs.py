@@ -26,7 +26,7 @@ def datasette_acl_roles(datasette):
     wins for display) and `manage=True` marks the role(s) whose actions
     authorize re-sharing the resource.
 
-    May return a list directly, or a function / awaitable returning one.
+    Return a list of AclRole directly.
 
     For the common Viewer/Editor/Manager triple, use
     ``datasette_acl.roles.standard_roles()`` instead of declaring each

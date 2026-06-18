@@ -54,7 +54,7 @@ async def test_datasette_acl_valid_actors(ds, register_plugin):
     # Check these are validated when editing permissions
     for actor_id, should_work in to_test:
         response = await ds.client.post(
-            "/db/t/-/acl",
+            "/-/acl/resource/table/db/t",
             data={
                 "new_actor_id": actor_id,
                 "new_user_actions": "insert-row",

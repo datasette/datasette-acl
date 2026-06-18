@@ -20,6 +20,9 @@ ManageTableTest = namedtuple(
 )
 
 
+TABLE_ACL_URL = "/-/acl/resource/table/db/t"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ManageTableTest._fields,
@@ -262,7 +265,7 @@ async def test_manage_table_permissions(
 
     if setup_post_data:
         setup_response = await ds.client.post(
-            "/db/t/-/acl",
+            TABLE_ACL_URL,
             data={**setup_post_data},
             cookies={
                 "ds_actor": ds.client.actor_cookie({"id": "root"}),
@@ -278,9 +281,9 @@ async def test_manage_table_permissions(
             resource=item.get("resource"),
         ), f"Should have failed: {repr(item)}"
 
-    # Use the /db/table/-/acl page to update permissions
+    # Use the generic table resource page to update permissions
     response = await ds.client.post(
-        "/db/t/-/acl",
+        TABLE_ACL_URL,
         data={**post_data},
         cookies={
             "ds_actor": ds.client.actor_cookie({"id": "root"}),
@@ -613,7 +616,7 @@ async def test_table_actions(ds, should_work):
     # 1.0a30 renders menu links with extra attrs (role/tabindex), so match the
     # href + label rather than an exact anchor tag.
     has_link = (
-        'href="/db/t/-/acl"' in response.text
+        f'href="{TABLE_ACL_URL}"' in response.text
         and "Manage table permissions" in response.text
     )
     if should_work:
@@ -623,13 +626,22 @@ async def test_table_actions(ds, should_work):
 
 
 @pytest.mark.asyncio
-async def test_table_acl_page_actions_are_dynamic(ds):
-    # The table permissions page should offer the action set discovered from
-    # datasette.actions (every TableResource-scoped action), not a hardcoded
-    # subset. Core registers view-table and set-column-type beyond the original
-    # five, so their presence proves discovery is dynamic.
+async def test_table_specific_acl_route_is_gone(ds):
     response = await ds.client.get(
         "/db/t/-/acl",
+        cookies={"ds_actor": ds.client.actor_cookie({"id": "root"})},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_table_resource_acl_page_actions_are_dynamic(ds):
+    # The generic table resource page should offer the action set discovered
+    # from datasette.actions (every TableResource-scoped action), not a
+    # hardcoded subset. Core registers view-table and set-column-type beyond
+    # the original five, so their presence proves discovery is dynamic.
+    response = await ds.client.get(
+        TABLE_ACL_URL,
         cookies={"ds_actor": ds.client.actor_cookie({"id": "root"})},
     )
     assert response.status_code == 200

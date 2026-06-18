@@ -15,13 +15,15 @@ datasette install datasette-acl
 ```
 ## Usage
 
-This plugin is under active development. It currently only supports configuring [permissions](https://docs.datasette.io/en/latest/authentication.html#permissions) for individual tables, controlling the following:
+This plugin is under active development. It supports configuring [permissions](https://docs.datasette.io/en/latest/authentication.html#permissions) for individual tables — controlling the following actions — as well as for [any custom resource type](#custom-resource-types) registered by a plugin:
 
 - `insert-row`
 - `delete-row`
 - `update-row`
 - `alter-table`
 - `drop-table`
+
+Grants can target individual users, [user groups](#user-groups), or [general-access audiences](#principals-and-general-access) like "any signed-in user".
 
 Permissions are saved in the internal database. This means you should run Datasette with the `--internal path/to/internal.db` option, otherwise your permissions will be reset every time you restart Datasette.
 
@@ -32,6 +34,8 @@ A JSON HTTP API for reading and managing per-resource grants programmatically is
 The interface for configuring table permissions lives at `/database-name/table-name/-/acl`. It can be accessed from the table actions menu on the table page.
 
 Permission can be granted for each of the above table actions. They can be assigned to both groups and individual users, who can be added using their `actor["id"]`.
+
+The table page does not (yet) offer the **General access** section found on the generic resource page — to grant a table action to a public audience such as "any signed-in user", use the [JSON API](docs/json-api.md) or the [Python helpers](#python-api-for-managing-grants). See [Principals and general access](#principals-and-general-access).
 
 An audit log tracks which permissions were added and removed, displayed at the bottom of the table permissions page.
 
@@ -68,7 +72,25 @@ A generic admin page for any resource type lives at:
 
 For example `/-/acl/resource/playlist/workspace-1/playlist-42`. The `<child>` segment is optional for parent-only resource types (`/-/acl/resource/<resource-type>/<parent>`). The page presents the same group/user grant interface and audit log as the table page, with checkboxes for exactly the actions registered for that resource type. Access to this admin page is gated on the `datasette-acl` permission described below.
 
+The page also has a **General access** section for exposing a resource without naming individual users — see [Principals and general access](#principals-and-general-access) below.
+
 Grants made here flow through Datasette's permission system: once granted, `await datasette.allowed(actor=..., action="playlist-edit", resource=Playlist("workspace-1", "playlist-42"))` returns `True`.
+
+### Principals and general access
+
+Every grant names exactly one **principal**, recorded in the `principal_type` column on each stored grant. There are five kinds — two identified by an id, and three public audiences identified by the type alone:
+
+| `principal_type` | Grants to | Identified by |
+| --- | --- | --- |
+| `actor` | An individual user | `actor_id` |
+| `group` | All members of a [user group](#user-groups) | `group_id` |
+| `everyone` | Anyone, signed in or not | — |
+| `authenticated` | Any signed-in actor | — |
+| `anonymous` | Signed-out (anonymous) visitors only | — |
+
+The generic resource admin page presents the three audiences as its **General access** section (labelled "Anyone (signed in or not)", "Any signed-in user" and "Signed-out (anonymous) visitors only"), and the audit log's Principal column shows the same labels. Audiences can also be granted programmatically: pass `principal_type` to the [JSON API](docs/json-api.md), or an audience `Principal` (e.g. `Principal.authenticated()`) to the [Python helpers](#python-api-for-managing-grants).
+
+Audience grants store `principal_type` only; their `actor_id` and `group_id` columns are both null. Permission checks match actor grants by `actor_id`, group grants by `group_id`, and general-access grants by `principal_type`. Code writing rows directly to the `acl` table must provide a valid `principal_type` and respect the table's CHECK constraint; prefer the [Python API](#python-api-for-managing-grants).
 
 ### Declaring roles
 

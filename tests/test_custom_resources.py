@@ -309,6 +309,34 @@ async def test_anonymous_public_grant(widget_ds):
     assert not await widget_ds.allowed(
         action="widget-view", resource=resource, actor={"id": "anyone"}
     )
+
+
+@pytest.mark.asyncio
+async def test_anonymous_grant_never_matches_a_signed_in_actor(widget_ds):
+    # Historic regression: when public audiences were stored in-band as magic
+    # actor_id values, the enforcement SQL's direct-grant branch matched the
+    # stored '_anonymous' wildcard row for a *signed-in* caller whose actor id
+    # was literally '_anonymous'. Audiences now carry no id at all, so no
+    # actor id -- however weird -- can collide with one. Granted via the admin
+    # form, the same write path an admin uses.
+    resource = WidgetResource("shelf", "gadget")
+    response = await widget_ds.client.post(
+        "/-/acl/resource/widget/shelf/gadget",
+        data={"public_permissions_anonymous": "widget-view"},
+        cookies={"ds_actor": widget_ds.client.actor_cookie({"id": "root"})},
+    )
+    assert response.status_code == 302
+    # Anonymous callers are allowed
+    assert await widget_ds.allowed(
+        action="widget-view", resource=resource, actor=None
+    )
+    # Signed-in actors are denied, even ones with legacy-wildcard-looking ids
+    for actor_id in ("_anonymous", "anonymous", "*", "_signed_in"):
+        assert not await widget_ds.allowed(
+            action="widget-view", resource=resource, actor={"id": actor_id}
+        )
+
+
 @pytest.mark.asyncio
 async def test_actor_grant_with_legacy_wildcard_looking_id(widget_ds):
     # An actor whose id happens to look like an old wildcard is just an
@@ -517,6 +545,81 @@ async def test_generic_resource_view_grants_via_post(widget_ds):
     assert not await widget_ds.allowed(
         action="widget-view", resource=resource, actor=actor
     )
+
+
+@pytest.mark.asyncio
+async def test_generic_resource_view_renders_general_access(widget_ds):
+    response = await widget_ds.client.get(
+        "/-/acl/resource/widget/shelf/gadget",
+        cookies={"ds_actor": widget_ds.client.actor_cookie({"id": "root"})},
+    )
+    assert response.status_code == 200
+    assert "General access" in response.text
+    for principal_type in ("everyone", "authenticated", "anonymous"):
+        assert f'name="public_permissions_{principal_type}"' in response.text
+
+
+@pytest.mark.asyncio
+async def test_generic_resource_view_grants_public_via_post(widget_ds):
+    resource = WidgetResource("shelf", "gadget")
+    # Anonymous has no access yet
+    assert not await widget_ds.allowed(
+        action="widget-view", resource=resource, actor=None
+    )
+    response = await widget_ds.client.post(
+        "/-/acl/resource/widget/shelf/gadget",
+        data={"public_permissions_everyone": "widget-view"},
+        cookies={"ds_actor": widget_ds.client.actor_cookie({"id": "root"})},
+    )
+    assert response.status_code == 302
+    # 'everyone' exposes the resource to anyone, including anonymous
+    assert await widget_ds.allowed(
+        action="widget-view", resource=resource, actor=None
+    )
+    assert await widget_ds.allowed(
+        action="widget-view", resource=resource, actor={"id": "anyone"}
+    )
+    # The other action remains denied
+    assert not await widget_ds.allowed(
+        action="widget-edit", resource=resource, actor=None
+    )
+    # The public grant renders in the General access section, not as a user
+    page = await widget_ds.client.get(
+        "/-/acl/resource/widget/shelf/gadget",
+        cookies={"ds_actor": widget_ds.client.actor_cookie({"id": "root"})},
+    )
+    assert 'name="user_permissions_everyone"' not in page.text
+    # Audit history shows the friendly label
+    assert "Anyone (signed in or not) (general access)" in page.text
+
+
+@pytest.mark.asyncio
+async def test_generic_resource_view_revokes_public_via_post(widget_ds):
+    resource = WidgetResource("shelf", "gadget")
+    await _grant_public(
+        widget_ds,
+        principal_type="authenticated",
+        resource_type="widget",
+        parent="shelf",
+        child="gadget",
+        action="widget-view",
+    )
+    assert await widget_ds.allowed(
+        action="widget-view", resource=resource, actor={"id": "anyone"}
+    )
+    # The general-access selects are always present in the form, so a POST with
+    # the principal's select empty removes the grant (same as groups)
+    response = await widget_ds.client.post(
+        "/-/acl/resource/widget/shelf/gadget",
+        data={"public_permissions_authenticated": ""},
+        cookies={"ds_actor": widget_ds.client.actor_cookie({"id": "root"})},
+    )
+    assert response.status_code == 302
+    assert not await widget_ds.allowed(
+        action="widget-view", resource=resource, actor={"id": "anyone"}
+    )
+
+
 @pytest.mark.asyncio
 async def test_generic_resource_view_revokes_via_post(widget_ds):
     actor = {"id": "alice"}

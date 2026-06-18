@@ -47,6 +47,18 @@ table.audit td {
   {% endfor %}
 {% endif %}
 
+<h3>General access</h3>
+{% for principal, label in public_principals.items() %}
+  <div style="margin-bottom: 1em">
+    <label style="display: block" for="id_public_permissions_{{ loop.index }}">{{ label }}</label>
+    <select multiple name="public_permissions_{{ principal }}" id="id_public_permissions_{{ loop.index }}">
+      {% for action in actions %}
+        <option value="{{ action }}" {% if public_permissions and public_permissions.get(principal, {}).get(action) %}selected{% endif %}>{{ action }}</option>
+      {% endfor %}
+    </select>
+  </div>
+{% endfor %}
+
 <h3>Users</h3>
 {% for user in user_permissions %}
   <div>
@@ -109,8 +121,7 @@ document.addEventListener('DOMContentLoaded', function() {
       <th>Date and time</th>
       <th>Operation by</th>
       <th>Operation</th>
-      <th>Group</th>
-      <th>User</th>
+      <th>Principal</th>
       <th>Action</th>
     </tr>
   </thead>
@@ -120,8 +131,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <td>{{ entry.timestamp }}</td>
         <td>{{ entry.operation_by }}</td>
         <td>{{ entry.operation }}</td>
-        <td>{{ entry.group_name or '' }}</td>
-        <td>{{ entry.actor_id or '' }}</td>
+        <td>{% if entry.principal_type == 'group' %}{{ entry.group_name }} (group){% elif entry.principal_type in public_principals %}{{ public_principals[entry.principal_type] }} (general access){% else %}{{ entry.actor_id or '' }}{% endif %}</td>
         <td>{{ entry.action_name }}</td>
       </tr>
     {% endfor %}

@@ -5,100 +5,259 @@
 {% block extra_head %}
 <script src="{{ urls.static_plugins("datasette-acl", "choices-9.0.1.min.js") }}"></script>
 <link rel="stylesheet" href="{{ urls.static_plugins("datasette-acl", "choices-9.0.1.min.css") }}">
+<link rel="stylesheet" href="{{ urls.static_plugins("datasette-acl", "acl.css") }}">
 <style>
 #needs-save-message {
-  color: rgb(249, 114, 114);
+  color: #b4232a;
   font-weight: bold;
-  margin-top: 10px;
   opacity: 0;
   transition: opacity 0.2s ease-in-out;
-  padding-left: 0.8em;
 }
 #needs-save-message.visible {
   opacity: 1;
 }
+.resource-acl-heading {
+  margin: -0.45rem 0 1.5rem;
+  color: var(--acl-muted);
+}
+.resource-acl-heading code {
+  color: var(--acl-text);
+}
+.permissions-form {
+  max-width: 52rem;
+}
+.permissions-list {
+  margin-top: 0.85rem;
+  overflow: visible;
+}
+.permission-row {
+  display: grid;
+  grid-template-columns: minmax(10rem, 14rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  padding: 0.8rem 1rem;
+  position: relative;
+}
+.permission-principal {
+  padding-top: 0.45rem;
+  font-weight: 700;
+}
+.permission-principal a {
+  overflow-wrap: anywhere;
+}
+.permission-note {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--acl-muted);
+  font-size: 0.88rem;
+  font-weight: 400;
+}
+.permission-row .choices {
+  margin-bottom: 0;
+}
+.permission-row .choices__list--dropdown,
+.new-user-grid .choices__list--dropdown {
+  z-index: 20;
+}
+.new-user-grid {
+  display: grid;
+  grid-template-columns: minmax(10rem, 14rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  max-width: 52rem;
+}
+.new-user-grid label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-weight: 700;
+}
+.new-user-grid input,
+.new-user-grid select,
+.new-user-grid .choices {
+  width: 100%;
+  box-sizing: border-box;
+}
+.new-user-grid .choices {
+  margin-bottom: 0;
+}
+.save-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-top: 1.25rem;
+}
 table.audit {
-  border-collapse: collapse;
+  width: 100%;
+  border: 1px solid var(--acl-border);
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: 8px;
+  background: var(--acl-surface);
+  overflow: hidden;
+}
+table.audit th,
+table.audit td {
+  padding: 0.62rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+}
+table.audit th {
+  border-bottom: 1px solid var(--acl-border);
+  background: var(--acl-surface-soft);
+  color: var(--acl-muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 table.audit td {
-  border-top: 1px solid #aaa;
-  border-right: 1px solid #eee;
-  padding: 4px;
-  vertical-align: top;
+  border-top: 1px solid var(--acl-border-soft);
+}
+table.audit tbody tr:first-child td {
+  border-top: 0;
+}
+.audit-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.audit-actor,
+.audit-principal,
+.audit-action {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.95rem;
+}
+.audit-operation {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: #eef6f1;
+  color: #276749;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.audit-operation.operation-removed {
+  background: #fff0f0;
+  color: #9f1d24;
+}
+@media (max-width: 760px) {
+  .permission-row,
+  .new-user-grid {
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+  }
+  .permission-principal {
+    padding-top: 0;
+  }
+  .save-row {
+    display: block;
+  }
+  #needs-save-message {
+    display: block;
+    margin-top: 0.65rem;
+  }
 }
 </style>
 {% endblock %}
 
 {% block content %}
-<h1>Permissions for {{ resource_type }}: {{ parent }}{% if child %}/{{ child }}{% endif %}</h1>
+<div class="acl-page">
+<div class="acl-page-header">
+  <h1>Permissions</h1>
+  <span class="acl-badge">{{ resource_type }}</span>
+</div>
 
-<form action="{{ request.path }}" method="post">
+<p class="resource-acl-heading">Resource <code>{{ parent }}{% if child %}/{{ child }}{% endif %}</code></p>
+
+<form action="{{ request.path }}" method="post" class="permissions-form">
   {% if groups %}
-  <h3>Groups</h3>
-  {% for group in groups %}
-    <div style="margin-bottom: 1em">
-      <label style="display: block" for="id_group_permissions_{{ group }}"><a href="{{ urls.path("/-/acl/groups/" + group) }}">{{ group }}</a> ({{ group_sizes[group] }})</label>
+  <section class="acl-section">
+  <h2>Groups</h2>
+  <div class="acl-panel-list permissions-list">
+    {% for group in groups %}
+    <div class="acl-panel-row permission-row">
+      <label class="permission-principal" for="id_group_permissions_{{ group }}">
+        <a href="{{ urls.path("/-/acl/groups/" + group) }}">{{ group }}</a>
+        <span class="permission-note">{{ group_sizes[group] }} member{% if group_sizes[group] != 1 %}s{% endif %}</span>
+      </label>
       <select multiple name="group_permissions_{{ group }}" id="id_group_permissions_{{ group }}">
         {% for action in actions %}
           <option value="{{ action }}" {% if group_permissions and group_permissions.get(group, {}).get(action) %}selected{% endif %}>{{ action }}</option>
         {% endfor %}
       </select>
     </div>
-  {% endfor %}
-{% endif %}
-
-<h3>General access</h3>
-{% for principal, label in public_principals.items() %}
-  <div style="margin-bottom: 1em">
-    <label style="display: block" for="id_public_permissions_{{ loop.index }}">{{ label }}</label>
-    <select multiple name="public_permissions_{{ principal }}" id="id_public_permissions_{{ loop.index }}">
-      {% for action in actions %}
-        <option value="{{ action }}" {% if public_permissions and public_permissions.get(principal, {}).get(action) %}selected{% endif %}>{{ action }}</option>
-      {% endfor %}
-    </select>
-  </div>
-{% endfor %}
-
-<h3>Users</h3>
-{% for user in user_permissions %}
-  <div>
-    {{ user }}
-    <select multiple name="user_permissions_{{ user }}">
-      {% for action in actions %}
-        <option value="{{ action }}" {% if user_permissions and user_permissions.get(user, {}).get(action) %}selected{% endif %}>{{ action }}</option>
-      {% endfor %}
-    </select>
-  </div>
-{% endfor %}
-
-<div style="margin-top: 2em">
-  <label for="id_new_actor_id" style="display: block; font-size: 0.8em">Other user:</label>
-  {% if valid_actors %}
-    <select id="id_new_actor_id" name="new_actor_id">
-      <option></option>
-      {% for actor in valid_actors %}
-        <option value="{{ actor[0] }}">{{ actor[1] }}</option>
-      {% endfor %}
-    </select>
-  {% else %}
-    <input data-1p-ignore placeholder="User ID" style="width: 8em" id="id_new_actor_id" name="new_actor_id">
-  {% endif %}
-</div>
-
-<div>
-  <label for="id_new_user_actions" style="display: block; font-size: 0.8em">Permissions for the additional user:</label>
-  <select multiple name="new_user_actions" id="id_new_user_actions">
-    {% for action in actions %}
-      <option value="{{ action }}">{{ action }}</option>
     {% endfor %}
-  </select>
-</div>
+  </div>
+  </section>
+  {% endif %}
 
-<p style="margin-top: 1em">
-  <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
-  <input type="submit" value="Save changes" class="core">
-  <span id="needs-save-message"></span>
-</p>
+  <section class="acl-section">
+  <h2>General access</h2>
+  <div class="acl-panel-list permissions-list">
+    {% for principal, label in public_principals.items() %}
+    <div class="acl-panel-row permission-row">
+      <label class="permission-principal" for="id_public_permissions_{{ loop.index }}">{{ label }}</label>
+      <select multiple name="public_permissions_{{ principal }}" id="id_public_permissions_{{ loop.index }}">
+        {% for action in actions %}
+          <option value="{{ action }}" {% if public_permissions and public_permissions.get(principal, {}).get(action) %}selected{% endif %}>{{ action }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endfor %}
+  </div>
+  </section>
+
+  <section class="acl-section">
+  <h2>Users</h2>
+  {% if user_permissions %}
+  <div class="acl-panel-list permissions-list">
+    {% for user in user_permissions %}
+    <div class="acl-panel-row permission-row">
+      <label class="permission-principal">{{ user }}</label>
+      <select multiple name="user_permissions_{{ user }}">
+        {% for action in actions %}
+          <option value="{{ action }}" {% if user_permissions and user_permissions.get(user, {}).get(action) %}selected{% endif %}>{{ action }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="acl-empty">No user-specific permissions yet.</p>
+  {% endif %}
+  </section>
+
+  <section class="acl-section">
+  <h2>Add a user</h2>
+  <div class="new-user-grid">
+    <div>
+      <label for="id_new_actor_id">Other user</label>
+      {% if valid_actors %}
+        <select id="id_new_actor_id" name="new_actor_id">
+          <option></option>
+          {% for actor in valid_actors %}
+            <option value="{{ actor[0] }}">{{ actor[1] }}</option>
+          {% endfor %}
+        </select>
+      {% else %}
+        <input data-1p-ignore placeholder="User ID" id="id_new_actor_id" name="new_actor_id">
+      {% endif %}
+    </div>
+
+    <div>
+      <label for="id_new_user_actions">Permissions</label>
+      <select multiple name="new_user_actions" id="id_new_user_actions">
+        {% for action in actions %}
+          <option value="{{ action }}">{{ action }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  </section>
+
+  <p class="save-row">
+    <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+    <input type="submit" value="Save changes" class="acl-primary-action">
+    <span id="needs-save-message"></span>
+  </p>
 </form>
 
 <script>
@@ -114,7 +273,9 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 
 {% if audit_log %}
+<section class="acl-section">
 <h2>Audit history</h2>
+<div class="audit-wrap">
 <table class="audit">
   <thead>
     <tr>
@@ -129,31 +290,38 @@ document.addEventListener('DOMContentLoaded', function() {
     {% for entry in audit_log %}
       <tr>
         <td>{{ entry.timestamp }}</td>
-        <td>{{ entry.operation_by }}</td>
-        <td>{{ entry.operation }}</td>
-        <td>{% if entry.principal_type == 'group' %}{{ entry.group_name }} (group){% elif entry.principal_type in public_principals %}{{ public_principals[entry.principal_type] }} (general access){% else %}{{ entry.actor_id or '' }}{% endif %}</td>
-        <td>{{ entry.action_name }}</td>
+        <td class="audit-actor">{{ entry.operation_by }}</td>
+        <td><span class="audit-operation operation-{{ entry.operation }}">{{ entry.operation }}</span></td>
+        <td class="audit-principal">{% if entry.principal_type == 'group' %}{{ entry.group_name }} (group){% elif entry.principal_type in public_principals %}{{ public_principals[entry.principal_type] }} (general access){% else %}{{ entry.actor_id or '' }}{% endif %}</td>
+        <td class="audit-action">{{ entry.action_name }}</td>
       </tr>
     {% endfor %}
   </tbody>
 </table>
+</div>
+</section>
 {% endif %}
+</div>
 
 <script>
 // "You have unsaved changes" message
 const initialState = {};
-const checkboxes = document.querySelectorAll('table input[type="checkbox"]');
+const selectsForChanges = document.querySelectorAll('.permissions-form select');
 const messageElement = document.getElementById("needs-save-message");
 
+function selectValue(select) {
+  return Array.from(select.selectedOptions).map((option) => option.value).sort().join("\n");
+}
+
 function updateInitialState() {
-  checkboxes.forEach((checkbox) => {
-    initialState[checkbox.name] = checkbox.checked;
+  selectsForChanges.forEach((select) => {
+    initialState[select.name || select.id] = selectValue(select);
   });
 }
 
 function hasStateChanged() {
-  return Array.from(checkboxes).some(
-    (checkbox) => initialState[checkbox.name] !== checkbox.checked,
+  return Array.from(selectsForChanges).some(
+    (select) => initialState[select.name || select.id] !== selectValue(select),
   );
 }
 
@@ -173,8 +341,10 @@ function updateMessage() {
 
 updateInitialState();
 
-checkboxes.forEach((checkbox) => {
-  checkbox.addEventListener("change", updateMessage);
+selectsForChanges.forEach((select) => {
+  select.addEventListener("change", updateMessage);
+  select.addEventListener("addItem", updateMessage);
+  select.addEventListener("removeItem", updateMessage);
 });
 </script>
 

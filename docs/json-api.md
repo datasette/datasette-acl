@@ -1,11 +1,9 @@
 # datasette-acl JSON API
 
-A JSON HTTP API for reading and managing per-resource access grants. It is the
-backend for the "share" dialog, but it is a general-purpose API: any tool or
-agent can drive it to inspect and mutate grants programmatically.
+A JSON HTTP API for reading and managing per-resource access grants.
 
-All routes are registered by the plugin under the `/-/acl/api/` prefix and
-return `application/json`.
+All routes are registered under the `/-/acl/api/` prefix and
+return JSON.
 
 - [Concepts](#concepts)
   - [Resources](#resources)
@@ -13,7 +11,7 @@ return `application/json`.
   - [Roles vs. actions](#roles-vs-actions)
   - [The grant entry object](#the-grant-entry-object)
 - [Authorization](#authorization)
-- [Requests, CSRF, and errors](#requests-csrf-and-errors)
+- [API errors](#api-errors)
 - [Endpoints](#endpoints)
   - [GET resource grants](#get-resource-grants)
   - [POST grant](#post-grant)
@@ -29,18 +27,18 @@ return `application/json`.
 
 ### Resources
 
+A [resource](https://docs.datasette.io/en/latest/authentication.html#permissions) is something within Datasette that can be controlled via ACL rules. Examples include tables, queries, and additional concepts introduced by plugins such as [datasette-apps](https://github.com/datasette/datasette-apps).
+
 A resource is addressed by a `(resource_type, parent, child)` triple:
 
 - **`resource_type`** — the `Resource.name` of a registered resource class,
   e.g. `table`, or a custom type like `mock-doc`. A resource type is "known"
   only if some registered action declares it via `resource_class`. Requests for
   an unknown type are rejected (`403`).
-- **`parent`** — the first-level identifier (e.g. a database name, or a
-  document id).
+- **`parent`** — the first-level identifier (e.g. a database name).
 - **`child`** — the optional second-level identifier (e.g. a table name). Two-
   level types (`parent_class` set, e.g. a table inside a database) use both;
-  parent-only types (`parent_class is None`, e.g. a database or a standalone
-  document) use only `parent`.
+  parent-only types (`parent_class is None`, e.g. a database) use only `parent`.
 
 In URLs the child segment is **optional** — every resource route is registered
 in both a `/{parent}/{child}` and a `/{parent}` form. For a parent-only
@@ -55,10 +53,11 @@ that contain reserved characters.
 A grant attaches a set of actions on a resource to exactly **one** principal,
 which takes one of three forms in a mutation body:
 
-- **Actor** — identified by a string `actor_id` (e.g. `"alice"`).
-- **Group** — identified by an integer `group_id` (the `acl_groups.id`).
+- **Actor** — a [Datasette actor](https://docs.datasette.io/en/latest/authentication.html#actors) identified by a string `actor_id` (e.g. `"alice"`).
+- **Group** — an ACL group identified by an integer `group_id` (the `acl_groups.id`).
 - **Public audience** — a *class* of caller rather than a specific person,
-  named by `principal_type` with **neither** id:
+  named by `principal_type` alone; do not include either ID field
+  (`actor_id` or `group_id`):
 
 | `principal_type` | Matches                                       |
 | ---------------- | --------------------------------------------- |
@@ -70,16 +69,20 @@ Supplying none of these forms — or more than one — is a `400` error.
 (`principal_type` may also redundantly name `"actor"` / `"group"` alongside
 the matching id.)
 
-Audience grants store no id at all, so there is no reserved actor-id
-namespace: enforcement matches audiences on `principal_type` alone and actors
-on their literal id, and an actor named e.g. `_signed_in` is just an ordinary
-actor. In responses audiences are flagged `"kind": "public"` and are never run
-through actor enrichment (their `display_name` is the fixed UI label).
+Audience grants store no id at all. Enforcement matches audiences on
+`principal_type` alone. In responses these audience entries use
+`"principal": "public"` and `"kind": "public"` to distinguish them from actors
+and groups, and are never run through actor enrichment (their `display_name` is
+the fixed UI label).
 
 ### Roles vs. actions
 
-acl stores grants at the granularity of individual **actions** (e.g.
-`doc-view`, `doc-edit`, `doc-manage`). A **role** is a friendly named bundle of
+Datasette's default permission system is finely-grained: permissions to add,
+edit, and delete an item are managed separately.
+
+This can be inconvenient for end-users. `datasette-acl` introduces the concept of **roles** to provide a more human-friendly way of managing permissions, as an abstraction over the lower level permissions.
+
+A **role** is a friendly named bundle of
 actions declared for a resource type via the `datasette_acl_roles` hook (e.g.
 `Viewer = [doc-view]`, `Editor = [doc-view, doc-edit]`,
 `Manager = [doc-view, doc-edit, doc-manage]`).
@@ -92,7 +95,8 @@ raw `actions` array.
 
 ### The grant entry object
 
-Read and mutation responses describe a principal's grant with the same shape.
+Both the `GET` endpoint and successful write endpoints describe grants using
+the same object shapes.
 
 **Actor entry:**
 
@@ -109,10 +113,12 @@ Read and mutation responses describe a principal's grant with the same shape.
 }
 ```
 
-- `actions` is always sorted.
+- `actions` is always sorted alphabetically.
 - `role` is the resolved role name, or `null` if no role matches.
-- `kind` is taken from the actor-resolution layer (`actors_from_ids`, e.g.
-  `"user"`, `"agent"`), defaulting to `"user"`.
+- `kind` is taken from the actor-resolution layer (`actors_from_ids`) when
+  supplied, defaulting to `"user"`. Other kinds such as `"api_key"` or
+  `"agent"` may be used when an alternative mechanism is acting on behalf of a
+  user.
 - `display_name`, `email`, `avatar_url` are present only when the actor-
   resolution layer supplies them (so unknown actors omit them).
 
@@ -174,8 +180,8 @@ manager concept for it, so management falls back to the global `datasette-acl`
 permission only. (This is how table-style resources, which have raw actions but
 no roles, keep working.)
 
-The **read** endpoint is, in v1, also manager-only (it returns the full grant
-list). The **picker** endpoints accept the resource triple as optional query
+The **read** endpoint is also manager-only because it returns the full grant
+list. The **picker** endpoints accept the resource triple as optional query
 params and apply the same per-resource check when present, falling back to the
 global permission when absent (see each endpoint).
 
@@ -184,21 +190,9 @@ body is **not** the `{"ok": false}` shape — see below).
 
 ---
 
-## Requests, CSRF, and errors
+## API errors
 
-**Content type.** Mutation endpoints read a JSON object request body. An empty
-body is treated as `{}`. A body that is not valid JSON, or is valid JSON but
-not an object, is a `400` error.
-
-**CSRF.** These endpoints carry no token-based CSRF logic of their own. On
-Datasette 1.0a30+ the header-based `CrossOriginProtectionMiddleware`
-(Sec-Fetch-Site + Origin) rejects cross-origin browser writes before they reach
-the handler. Same-origin browser requests pass; non-browser clients (curl, the
-test client, server-to-server) send neither header and pass through. No
-`x-csrftoken` is required (the dialog may send one for forward-compat; core
-ignores it).
-
-**Error shapes.** There are two distinct failure renderings:
+There are two distinct error shapes:
 
 - **`403 Forbidden`** — raised for failed authorization and for unknown
   resource types. Rendered by Datasette core's forbidden handler (content
@@ -207,7 +201,10 @@ ignores it).
 - **`400` / `405` from the handler** — returned as a JSON envelope:
 
   ```json
-  { "ok": false, "error": "Provide exactly one of actor_id or group_id" }
+  {
+    "ok": false,
+    "error": "update requires a role"
+  }
   ```
 
   - `400` — bad/duplicate principal, unparseable body, unknown role, or
@@ -241,22 +238,39 @@ Returns the full share state for one resource: its role catalog, every grant
 grouped by principal (each enriched and role-resolved), and the caller's
 `can_manage` flag.
 
+Datasette's default resource types are:
+
+- `database` — `parent` is the database name; omit `child`.
+- `table` — `parent` is the database name, `child` is the table or view name.
+- `query` — `parent` is the database name, `child` is the stored query name.
+
+Plugins can add additional resource types by registering actions with custom
+resource classes; use the resource class's `name` as `resource_type`.
+
 **Authorization:** manager-only (`can_manage` must be true).
 
 **Response `200`:**
 
 ```json
 {
-  "resource_type": "mock-doc",
-  "parent": "42",
-  "child": null,
+  "resource_type": "query",
+  "parent": "content",
+  "child": "recent_releases",
   "can_manage": true,
   "roles": [
-    { "name": "Viewer", "actions": ["doc-view"], "rank": 1 },
-    { "name": "Editor", "actions": ["doc-view", "doc-edit"], "rank": 2 },
+    {
+      "name": "Viewer",
+      "actions": ["view-query"],
+      "rank": 1
+    },
+    {
+      "name": "Editor",
+      "actions": ["update-query", "view-query"],
+      "rank": 2
+    },
     {
       "name": "Manager",
-      "actions": ["doc-view", "doc-edit", "doc-manage"],
+      "actions": ["delete-query", "update-query", "view-query"],
       "rank": 3,
       "manage": true,
       "description": "Full control"
@@ -267,7 +281,7 @@ grouped by principal (each enriched and role-resolved), and the caller's
       "principal": "actor",
       "id": "alice",
       "role": "Manager",
-      "actions": ["doc-edit", "doc-manage", "doc-view"],
+      "actions": ["delete-query", "update-query", "view-query"],
       "kind": "user",
       "display_name": "Alice Garcia",
       "email": "alice@example.com",
@@ -277,7 +291,7 @@ grouped by principal (each enriched and role-resolved), and the caller's
       "principal": "group",
       "id": "7",
       "role": "Viewer",
-      "actions": ["doc-view"],
+      "actions": ["view-query"],
       "kind": "group",
       "display_name": "staff",
       "member_count": 3
@@ -304,28 +318,42 @@ POST /-/acl/api/resource/{resource_type}/{parent}/{child}/grant
 POST /-/acl/api/resource/{resource_type}/{parent}/grant
 ```
 
-Adds actions for a principal on the resource. **Idempotent** — only actions not
-already held are inserted; each insert is written to the audit log
-(`operation: "added"`, `operation_by` = the calling actor's id). Returns the
-principal's full action-set after the grant.
+Adds actions for a principal on the resource.
+
+This endpoint is **idempotent** — only actions not
+already held are inserted, and each insert is written to the audit log
+(`operation: "added"`, `operation_by` = the calling actor's id).
+
+Returns the principal's full action-set after the grant.
 
 **Authorization:** `can_manage`.
 
-**Body** — exactly one principal, and exactly one of `role` / `actions`:
+**Body** — exactly one of `actor_id` / `group_id` / `principal_type`, and exactly one of `role` / `actions`:
 
 | Field      | Type            | Notes                                                |
 | ---------- | --------------- | ---------------------------------------------------- |
 | `actor_id` | string          | An individual actor. One principal form of three.    |
 | `group_id` | integer         | A group. One principal form of three.                |
-| `principal_type` | string    | A public audience: `"everyone"` / `"authenticated"` / `"anonymous"`, with neither id (see [Principals](#principals)). |
+| `principal_type` | string    | A public audience: `"everyone"` / `"authenticated"` / `"anonymous"`. Do not include `actor_id` or `group_id` (see [Principals](#principals)). |
 | `role`     | string          | A role name for this resource type. Expands to its actions. Supply this **or** `actions`. |
 | `actions`  | array of string | Raw action names. Supply this **or** `role`.         |
 
+To grant the "Editor" role to "bob":
+
 ```json
-{ "actor_id": "bob", "role": "Editor" }
+{
+  "actor_id": "bob",
+  "role": "Editor"
+}
 ```
+
+To allow members of group 7 the ability to both `doc-view` and `doc-edit`:
+
 ```json
-{ "group_id": 7, "actions": ["doc-view", "doc-edit"] }
+{
+  "group_id": 7,
+  "actions": ["doc-view", "doc-edit"]
+}
 ```
 
 **Response `200`:**
@@ -364,17 +392,23 @@ audited. Returns the enriched grant.
 
 **Authorization:** `can_manage`.
 
-**Body** — exactly one principal, plus a **required** `role`:
+**Body** — exactly one of `actor_id` / `group_id` / `principal_type`, plus a
+**required** `role`:
 
 | Field      | Type    | Notes                                    |
 | ---------- | ------- | ---------------------------------------- |
 | `actor_id` | string  | An individual actor. One principal form of three. |
 | `group_id` | integer | A group. One principal form of three.    |
-| `principal_type` | string | A public audience, with neither id (see [Principals](#principals)). |
+| `principal_type` | string | A public audience. Do not include `actor_id` or `group_id` (see [Principals](#principals)). |
 | `role`     | string  | Required. The role to swap the principal to. |
 
+To replace the actor `bob`'s current actions with the "Viewer" role:
+
 ```json
-{ "actor_id": "bob", "role": "Viewer" }
+{
+  "actor_id": "bob",
+  "role": "Viewer"
+}
 ```
 
 **Response `200`:** same `{ "ok": true, "grant": <entry> }` shape as
@@ -383,7 +417,8 @@ audited. Returns the enriched grant.
 **Errors:** `400` if `role` is missing/unknown or the principal is invalid;
 `403` for authz / unknown resource type. Use `update` (not repeated
 grant/revoke) when you want the principal's actions to end up *exactly* equal to
-one role.
+one role. To replace a principal's actions with an arbitrary raw `actions`
+list, first `revoke` that principal's grant and then `grant` the new `actions`.
 
 ### POST revoke
 
@@ -397,22 +432,31 @@ Removes **all** grants for a principal on the resource. Each removal is audited
 
 **Authorization:** `can_manage`.
 
-**Body** — exactly one principal (no role/actions):
+**Body** — exactly one of `actor_id` / `group_id` / `principal_type` (no role/actions):
 
 | Field      | Type    | Notes                          |
 | ---------- | ------- | ------------------------------ |
 | `actor_id` | string  | An individual actor. One principal form of three. |
 | `group_id` | integer | A group. One principal form of three. |
-| `principal_type` | string | A public audience, with neither id (see [Principals](#principals)). |
+| `principal_type` | string | A public audience. Do not include `actor_id` or `group_id` (see [Principals](#principals)). |
+
+To remove all grants for the actor `bob` on this resource:
 
 ```json
-{ "actor_id": "bob" }
+{
+  "actor_id": "bob"
+}
 ```
 
 **Response `200`:**
 
+A successful response lists the action names that were removed:
+
 ```json
-{ "ok": true, "removed": ["doc-edit", "doc-manage", "doc-view"] }
+{
+  "ok": true,
+  "removed": ["doc-edit", "doc-manage", "doc-view"]
+}
 ```
 
 `removed` is sorted. Revoking a principal with no grants returns
@@ -431,24 +475,36 @@ GET /-/acl/api/groups?resource_type={type}&parent={parent}&child={child}
 Lists every active (non soft-deleted) group with a member count — the source
 for a group autocomplete. Ordered by group name.
 
-**Authorization:** if `resource_type` **and** `parent` query params are present,
-the per-resource `can_manage` check is applied (so a per-resource Manager who
-lacks the global admin permission can still use the picker). Otherwise the
-global `datasette-acl` permission is required. If neither passes → `403`.
+**Authorization:** group names may be sensitive, so this endpoint is only
+available to callers who are trusted to manage permissions somewhere. There
+are two ways to qualify:
+
+- Global ACL admins can call `/groups` directly using the `datasette-acl`
+  permission.
+- Resource managers can pass `resource_type` and `parent` (`child` is
+  optional). Those query params are used only for the `can_manage` check on
+  that resource; they do not filter the returned groups.
+
+If neither check passes → `403`.
 
 **Response `200`:**
 
 ```json
 {
   "groups": [
-    { "id": 7, "name": "staff", "member_count": 3 },
-    { "id": 9, "name": "interns", "member_count": 0 }
+    {
+      "id": 7,
+      "name": "staff",
+      "member_count": 3
+    },
+    {
+      "id": 9,
+      "name": "interns",
+      "member_count": 0
+    }
   ]
 }
 ```
-
-(Here `id` is a number; note that grant *entries* render group `id` as a
-string.)
 
 ### GET actors picker
 
@@ -457,7 +513,7 @@ GET /-/acl/api/actors?q={query}&kind={kind}
 GET /-/acl/api/actors?q={query}&resource_type={type}&parent={parent}&child={child}
 ```
 
-Actor autocomplete. If the `datasette-acl` deployment also has the user-profiles
+Actor autocomplete. If the Datasette instance also has the [datasette-user-profiles](https://github.com/datasette/datasette-user-profiles)
 plugin installed, this proxies to its search API
 (`GET /-/profiles/api/search`), forwarding the caller's identity so the
 profiles access gate evaluates against the real caller. Otherwise it falls back
@@ -542,7 +598,7 @@ curl -s -X POST 'https://example.org/-/acl/api/resource/mock-doc/42/grant' \
 ```
 
 Make the document public to signed-in users — the `authenticated` audience is
-named by `principal_type`, with no id:
+named by `principal_type` alone:
 
 ```bash
 curl -s -X POST 'https://example.org/-/acl/api/resource/mock-doc/42/grant' \

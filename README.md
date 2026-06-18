@@ -90,7 +90,7 @@ Every grant names exactly one **principal**, recorded in the `principal_type` co
 
 The generic resource admin page presents the three audiences as its **General access** section (labelled "Anyone (signed in or not)", "Any signed-in user" and "Signed-out (anonymous) visitors only"), and the audit log's Principal column shows the same labels. Audiences can also be granted programmatically: pass `principal_type` to the [JSON API](docs/json-api.md), or an audience `Principal` (e.g. `Principal.authenticated()`) to the [Python helpers](#python-api-for-managing-grants).
 
-Because an audience grant stores no id at all, there is no reserved actor-id namespace: permission checks match audiences on `principal_type` alone and actors on their literal id, so no user id — however unusual — can collide with a general-access grant. One note for third-party code writing raw SQL into the `acl` table: the `principal_type` column is NOT NULL and CHECK-constrained, so such writers must supply it themselves (use the [Python API](#python-api-for-managing-grants) instead).
+Audience grants store `principal_type` only; their `actor_id` and `group_id` columns are both null. Permission checks match actor grants by `actor_id`, group grants by `group_id`, and general-access grants by `principal_type`. Code writing rows directly to the `acl` table must provide a valid `principal_type` and respect the table's CHECK constraint; prefer the [Python API](#python-api-for-managing-grants).
 
 ### Declaring roles
 

@@ -261,6 +261,8 @@ await grant(datasette, "table", "mydb", "mytable", principal=Principal.actor("al
 await grant(datasette, "table", "mydb", "mytable", principal=Principal.group(3), actions=["insert-row"], by_actor="root")
 ```
 
+To remove one action from a principal while keeping others, first `revoke(...)` all grants for that principal on the resource, then call `grant(..., actions=[...])` with the actions that should remain.
+
 `update_role(...)` — atomically swap a principal's actions to exactly those of a registered `role`. Returns the new actions:
 
 ```python

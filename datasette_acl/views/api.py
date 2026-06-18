@@ -54,7 +54,6 @@ from datasette_acl.grants import (
 from datasette_acl.roles import role_for_actions, roles_for
 from datasette_acl.utils import (
     PUBLIC_PRINCIPAL_TYPES,
-    build_resource,
     can_manage,
     resource_class_for,
     resource_exists,

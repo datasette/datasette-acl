@@ -169,7 +169,7 @@ async def test_create_delete_group(ds):
     # Add sally, sam and paulo
     for actor_id in ("sally", "sam", "paulo"):
         add_response = await ds.client.post(
-            f"/-/acl/groups/sales",
+            "/-/acl/groups/sales",
             data={"add": actor_id},
             cookies={
                 "ds_actor": ds.client.actor_cookie({"id": "root"}),

@@ -11,17 +11,18 @@ Every mutating helper:
   * writes the ``acl`` rows, and
   * appends ``acl_audit`` entries (``operation_by`` = ``by_actor``).
 
-Principal invariant: a grant targets exactly one principal -- an actor
-(``actor_id=``), a group (``group_id=``), or a public audience
-(``principal_type=`` one of ``'everyone'`` / ``'authenticated'`` /
-``'anonymous'``, with no id at all) -- matching the CHECK constraint on the
-``acl`` table. :func:`principal_type_for` is the single place that resolves
-and validates the combination.
+Principal invariant: a grant targets exactly one principal -- an actor, a
+group, or a public audience -- matching the CHECK constraint on the ``acl``
+table. The :class:`Principal` value object is the single place that resolves
+and validates the combination; every helper takes one ``principal`` rather
+than threading ``(principal_type, actor_id, group_id)`` around by hand.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import (
+    Dict,
     Iterable,
     List,
     Literal,
@@ -40,6 +41,127 @@ if TYPE_CHECKING:
 
 
 PrincipalType = Literal["actor", "group", "everyone", "authenticated", "anonymous"]
+
+
+@dataclass(frozen=True)
+class Principal:
+    """A grant's target: an actor, a group, or a public audience.
+
+    Build one via the classmethods rather than the raw constructor so the
+    "exactly one principal" invariant (which mirrors the ``acl`` CHECK
+    constraint) is enforced in a single place::
+
+        Principal.actor("alice")
+        Principal.group(7)
+        Principal.everyone()        # / .authenticated() / .anonymous()
+        Principal.public("everyone")
+
+    :meth:`from_parts` resolves the looser ``(actor_id, group_id,
+    principal_type)`` combination that arrives from a request body, validating
+    it the same way. :meth:`where_sql` / :meth:`sql_params` produce the
+    principal-matching SQL fragment shared by every read/write helper.
+    """
+
+    principal_type: PrincipalType
+    actor_id: Optional[str] = None
+    group_id: Optional[int] = None
+
+    @classmethod
+    def actor(cls, actor_id: str) -> "Principal":
+        if actor_id is None:
+            raise ValueError("actor principal requires an actor_id")
+        return cls("actor", actor_id=actor_id)
+
+    @classmethod
+    def group(cls, group_id: int) -> "Principal":
+        if group_id is None:
+            raise ValueError("group principal requires a group_id")
+        return cls("group", group_id=group_id)
+
+    @classmethod
+    def public(cls, principal_type: str) -> "Principal":
+        if principal_type not in PUBLIC_PRINCIPAL_TYPES:
+            raise ValueError(
+                f"Unknown public principal_type {principal_type!r}; expected "
+                f"one of {', '.join(sorted(PUBLIC_PRINCIPAL_TYPES))}"
+            )
+        return cls(principal_type)
+
+    @classmethod
+    def everyone(cls) -> "Principal":
+        return cls("everyone")
+
+    @classmethod
+    def authenticated(cls) -> "Principal":
+        return cls("authenticated")
+
+    @classmethod
+    def anonymous(cls) -> "Principal":
+        return cls("anonymous")
+
+    @classmethod
+    def from_parts(
+        cls,
+        actor_id: Optional[str],
+        group_id: Optional[int],
+        principal_type: Optional[str] = None,
+    ) -> "Principal":
+        """Resolve a principal from a loose ``(actor_id, group_id, type)`` set.
+
+        A principal is exactly one of: an actor (``actor_id``), a group
+        (``group_id``), or a public audience (``principal_type`` in
+        ``PUBLIC_PRINCIPAL_TYPES``, with neither id). ``principal_type`` may
+        also redundantly name ``'actor'`` / ``'group'`` alongside the matching
+        id. Raises ``ValueError`` for any other combination, mirroring the
+        acl table's CHECK constraint.
+        """
+        if principal_type in PUBLIC_PRINCIPAL_TYPES:
+            if actor_id is not None or group_id is not None:
+                raise ValueError(
+                    f"principal_type {principal_type!r} cannot be combined "
+                    "with actor_id= or group_id="
+                )
+            return cls(principal_type)
+        if (actor_id is None) == (group_id is None):
+            raise ValueError(
+                "Provide exactly one principal: actor_id=, group_id=, or a "
+                f"public principal_type ({', '.join(PUBLIC_PRINCIPAL_TYPES)})"
+            )
+        if group_id is not None:
+            if principal_type not in (None, "group"):
+                raise ValueError(
+                    f"principal_type {principal_type!r} cannot be used "
+                    "with group_id="
+                )
+            return cls("group", group_id=group_id)
+        if principal_type not in (None, "actor"):
+            raise ValueError(
+                f"principal_type {principal_type!r} cannot be used "
+                "with actor_id="
+            )
+        return cls("actor", actor_id=actor_id)
+
+    def where_sql(self, alias: Optional[str] = None) -> str:
+        """SQL fragment matching this principal's acl rows.
+
+        ``alias`` qualifies the column references (e.g. ``"acl"`` for a joined
+        query); omit it for a single-table statement. Pair with
+        :meth:`sql_params` for the bind values.
+        """
+        col = f"{alias}." if alias else ""
+        if self.principal_type == "actor":
+            return f"{col}principal_type = 'actor' AND {col}actor_id = :actor_id"
+        if self.principal_type == "group":
+            return f"{col}principal_type = 'group' AND {col}group_id = :group_id"
+        # Public audience: the type alone identifies the principal.
+        return f"{col}principal_type = :principal_type"
+
+    def sql_params(self) -> Dict[str, object]:
+        return {
+            "principal_type": self.principal_type,
+            "actor_id": self.actor_id,
+            "group_id": self.group_id,
+        }
 
 
 class Grant(TypedDict):
@@ -93,45 +215,6 @@ def _resolve_actions(
     return requested
 
 
-def principal_type_for(
-    actor_id: Optional[str],
-    group_id: Optional[int],
-    principal_type: Optional[str] = None,
-) -> PrincipalType:
-    """Resolve and validate the ``principal_type`` for a grant's principal.
-
-    A principal is exactly one of: an actor (``actor_id=``), a group
-    (``group_id=``), or a public audience (``principal_type=`` one of
-    ``PUBLIC_PRINCIPAL_TYPES``, with neither id). ``principal_type`` may also
-    redundantly name ``'actor'`` / ``'group'`` alongside the matching id.
-    Raises ``ValueError`` for any other combination, mirroring the acl table's
-    CHECK constraint.
-    """
-    if principal_type in PUBLIC_PRINCIPAL_TYPES:
-        if actor_id is not None or group_id is not None:
-            raise ValueError(
-                f"principal_type {principal_type!r} cannot be combined with "
-                "actor_id= or group_id="
-            )
-        return principal_type
-    if (actor_id is None) == (group_id is None):
-        raise ValueError(
-            "Provide exactly one principal: actor_id=, group_id=, or a "
-            f"public principal_type ({', '.join(PUBLIC_PRINCIPAL_TYPES)})"
-        )
-    if group_id is not None:
-        if principal_type not in (None, "group"):
-            raise ValueError(
-                f"principal_type {principal_type!r} cannot be used with group_id="
-            )
-        return "group"
-    if principal_type not in (None, "actor"):
-        raise ValueError(
-            f"principal_type {principal_type!r} cannot be used with actor_id="
-        )
-    return "actor"
-
-
 async def _ensure_resource_id(
     db: Database, resource_type: str, parent: str, child: Optional[str]
 ) -> int:
@@ -168,31 +251,17 @@ async def _ensure_actions(db: Database, actions: Iterable[str]) -> None:
 async def _current_actions(
     db: Database,
     resource_id: int,
-    principal_type: PrincipalType,
-    actor_id: Optional[str],
-    group_id: Optional[int],
+    principal: Principal,
 ) -> Set[str]:
     """Return the set of action names currently granted to a principal."""
-    if principal_type == "actor":
-        where = "acl.principal_type = 'actor' AND acl.actor_id = :actor_id"
-    elif principal_type == "group":
-        where = "acl.principal_type = 'group' AND acl.group_id = :group_id"
-    else:
-        # Public audience: the type alone identifies the principal.
-        where = "acl.principal_type = :principal_type"
     rows = await db.execute(
         f"""
         SELECT acl_actions.name AS name
         FROM acl
         JOIN acl_actions ON acl.action_id = acl_actions.id
-        WHERE acl.resource_id = :resource_id AND {where}
+        WHERE acl.resource_id = :resource_id AND {principal.where_sql("acl")}
         """,
-        {
-            "resource_id": resource_id,
-            "principal_type": principal_type,
-            "actor_id": actor_id,
-            "group_id": group_id,
-        },
+        {"resource_id": resource_id, **principal.sql_params()},
     )
     return {row["name"] for row in rows.rows}
 
@@ -200,9 +269,7 @@ async def _current_actions(
 async def _insert_grant(
     db: Database,
     resource_id: int,
-    principal_type: PrincipalType,
-    actor_id: Optional[str],
-    group_id: Optional[int],
+    principal: Principal,
     action_name: str,
     by_actor: Optional[str],
 ) -> None:
@@ -220,68 +287,42 @@ async def _insert_grant(
         )
         """,
         {
-            "principal_type": principal_type,
-            "actor_id": actor_id,
-            "group_id": group_id,
+            **principal.sql_params(),
             "resource_id": resource_id,
             "action_name": action_name,
         },
     )
-    await _audit(
-        db, "added", resource_id, principal_type, actor_id, group_id, action_name, by_actor
-    )
+    await _audit(db, "added", resource_id, principal, action_name, by_actor)
 
 
 async def _delete_grant(
     db: Database,
     resource_id: int,
-    principal_type: PrincipalType,
-    actor_id: Optional[str],
-    group_id: Optional[int],
+    principal: Principal,
     action_name: str,
     by_actor: Optional[str],
 ) -> None:
-    if principal_type == "actor":
-        principal_where = "principal_type = 'actor' AND actor_id = :actor_id"
-    elif principal_type == "group":
-        principal_where = "principal_type = 'group' AND group_id = :group_id"
-    else:
-        # Public audience: the type alone identifies the principal.
-        principal_where = "principal_type = :principal_type"
     await db.execute_write(
         f"""
         DELETE FROM acl
-        WHERE {principal_where}
+        WHERE {principal.where_sql()}
           AND resource_id = :resource_id
           AND action_id = (SELECT id FROM acl_actions WHERE name = :action_name)
         """,
         {
-            "principal_type": principal_type,
-            "actor_id": actor_id,
-            "group_id": group_id,
+            **principal.sql_params(),
             "resource_id": resource_id,
             "action_name": action_name,
         },
     )
-    await _audit(
-        db,
-        "removed",
-        resource_id,
-        principal_type,
-        actor_id,
-        group_id,
-        action_name,
-        by_actor,
-    )
+    await _audit(db, "removed", resource_id, principal, action_name, by_actor)
 
 
 async def _audit(
     db: Database,
     operation: Literal["added", "removed"],
     resource_id: int,
-    principal_type: PrincipalType,
-    actor_id: Optional[str],
-    group_id: Optional[int],
+    principal: Principal,
     action_name: str,
     by_actor: Optional[str],
 ) -> None:
@@ -302,9 +343,7 @@ async def _audit(
         """,
         {
             "operation": operation,
-            "principal_type": principal_type,
-            "actor_id": actor_id,
-            "group_id": group_id,
+            **principal.sql_params(),
             "resource_id": resource_id,
             "action_name": action_name,
             "operation_by": by_actor,
@@ -318,33 +357,27 @@ async def grant(
     parent: str,
     child: Optional[str] = None,
     *,
-    actor_id: Optional[str] = None,
-    group_id: Optional[int] = None,
+    principal: Principal,
     role: Optional[str] = None,
     actions: Optional[Iterable[str]] = None,
     by_actor: Optional[str] = None,
-    principal_type: Optional[PrincipalType] = None,
 ) -> List[str]:
     """Grant a principal access to a resource, by role or by raw actions.
 
-    The principal is exactly one of ``actor_id=``, ``group_id=``, or a public
-    audience passed as ``principal_type=`` (``'everyone'`` /
-    ``'authenticated'`` / ``'anonymous'``, with neither id). Exactly one of
-    ``role`` / ``actions`` must be supplied. Only actions not already granted
-    are inserted (idempotent). Returns the list of action names now held by
-    the principal.
+    ``principal`` is a :class:`Principal` (``Principal.actor(...)`` /
+    ``.group(...)`` / ``.everyone()`` / etc). Exactly one of ``role`` /
+    ``actions`` must be supplied. Only actions not already granted are
+    inserted (idempotent). Returns the list of action names now held by the
+    principal.
     """
-    ptype = principal_type_for(actor_id, group_id, principal_type)
     resolved = _resolve_actions(datasette, resource_type, role, actions)
     db = datasette.get_internal_database()
     resource_id = await _ensure_resource_id(db, resource_type, parent, child)
     await _ensure_actions(db, resolved)
-    existing = await _current_actions(db, resource_id, ptype, actor_id, group_id)
+    existing = await _current_actions(db, resource_id, principal)
     for action_name in resolved:
         if action_name not in existing:
-            await _insert_grant(
-                db, resource_id, ptype, actor_id, group_id, action_name, by_actor
-            )
+            await _insert_grant(db, resource_id, principal, action_name, by_actor)
     return sorted(existing | set(resolved))
 
 
@@ -354,24 +387,19 @@ async def revoke(
     parent: str,
     child: Optional[str] = None,
     *,
-    actor_id: Optional[str] = None,
-    group_id: Optional[int] = None,
+    principal: Principal,
     by_actor: Optional[str] = None,
-    principal_type: Optional[PrincipalType] = None,
 ) -> List[str]:
     """Remove all acl rows for a principal on a resource. Audits each removal.
 
     The principal is specified as in :func:`grant`. Returns the list of action
     names that were removed.
     """
-    ptype = principal_type_for(actor_id, group_id, principal_type)
     db = datasette.get_internal_database()
     resource_id = await _ensure_resource_id(db, resource_type, parent, child)
-    existing = await _current_actions(db, resource_id, ptype, actor_id, group_id)
+    existing = await _current_actions(db, resource_id, principal)
     for action_name in sorted(existing):
-        await _delete_grant(
-            db, resource_id, ptype, actor_id, group_id, action_name, by_actor
-        )
+        await _delete_grant(db, resource_id, principal, action_name, by_actor)
     return sorted(existing)
 
 
@@ -381,11 +409,9 @@ async def update_role(
     parent: str,
     child: Optional[str] = None,
     *,
-    actor_id: Optional[str] = None,
-    group_id: Optional[int] = None,
+    principal: Principal,
     role: str,
     by_actor: Optional[str] = None,
-    principal_type: Optional[PrincipalType] = None,
 ) -> List[str]:
     """Atomically swap a principal's action set on a resource to ``role``.
 
@@ -393,20 +419,15 @@ async def update_role(
     granted actions that are not in the new role, then adds any missing ones.
     Audits each change. Returns the new action list.
     """
-    ptype = principal_type_for(actor_id, group_id, principal_type)
     resolved = set(_resolve_actions(datasette, resource_type, role, None))
     db = datasette.get_internal_database()
     resource_id = await _ensure_resource_id(db, resource_type, parent, child)
     await _ensure_actions(db, resolved)
-    existing = await _current_actions(db, resource_id, ptype, actor_id, group_id)
+    existing = await _current_actions(db, resource_id, principal)
     for action_name in sorted(existing - resolved):
-        await _delete_grant(
-            db, resource_id, ptype, actor_id, group_id, action_name, by_actor
-        )
+        await _delete_grant(db, resource_id, principal, action_name, by_actor)
     for action_name in sorted(resolved - existing):
-        await _insert_grant(
-            db, resource_id, ptype, actor_id, group_id, action_name, by_actor
-        )
+        await _insert_grant(db, resource_id, principal, action_name, by_actor)
     return sorted(resolved)
 
 

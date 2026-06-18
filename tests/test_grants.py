@@ -14,7 +14,7 @@ from datasette_acl.grants import (
     revoke,
     update_role,
     list_grants,
-    principal_type_for,
+    Principal,
     _insert_grant,
 )
 from datasette_acl.roles import AclRole
@@ -179,7 +179,12 @@ async def test_build_resource_unknown_type(grants_ds):
 @pytest.mark.asyncio
 async def test_grant_by_role(grants_ds):
     result = await grant(
-        grants_ds, "doc", "42", actor_id="alice", role="Editor", by_actor="root"
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Editor",
+        by_actor="root",
     )
     assert result == ["doc-edit", "doc-view"]
     assert await _actions_for(grants_ds, "alice") == ["doc-edit", "doc-view"]
@@ -192,7 +197,12 @@ async def test_grant_by_role(grants_ds):
 @pytest.mark.asyncio
 async def test_grant_by_raw_actions(grants_ds):
     result = await grant(
-        grants_ds, "doc", "42", actor_id="bob", actions=["doc-view"], by_actor="root"
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("bob"),
+        actions=["doc-view"],
+        by_actor="root",
     )
     assert result == ["doc-view"]
     assert await _actions_for(grants_ds, "bob") == ["doc-view"]
@@ -200,10 +210,22 @@ async def test_grant_by_raw_actions(grants_ds):
 
 @pytest.mark.asyncio
 async def test_grant_is_idempotent(grants_ds):
-    await grant(grants_ds, "doc", "42", actor_id="alice", role="Editor", by_actor="root")
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Editor",
+        by_actor="root",
+    )
     # Granting again with overlap only inserts the new action
     result = await grant(
-        grants_ds, "doc", "42", actor_id="alice", role="Manager", by_actor="root"
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Manager",
+        by_actor="root",
     )
     assert result == ["doc-edit", "doc-manage", "doc-view"]
     assert await _actions_for(grants_ds, "alice") == [
@@ -224,7 +246,12 @@ async def test_grant_is_idempotent(grants_ds):
 async def test_grant_to_group(grants_ds):
     gid = await _group_id(grants_ds, "staff")
     result = await grant(
-        grants_ds, "doc", "42", group_id=gid, role="Viewer", by_actor="root"
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.group(gid),
+        role="Viewer",
+        by_actor="root",
     )
     assert result == ["doc-view"]
     grants = await list_grants(grants_ds, "doc", "42")
@@ -242,25 +269,27 @@ async def test_grant_to_group(grants_ds):
 @pytest.mark.asyncio
 async def test_grant_unknown_role_raises(grants_ds):
     with pytest.raises(ValueError):
-        await grant(grants_ds, "doc", "42", actor_id="alice", role="Nope")
-
-
-@pytest.mark.asyncio
-async def test_grant_requires_exactly_one_principal(grants_ds):
-    with pytest.raises(ValueError):
-        await grant(grants_ds, "doc", "42", role="Viewer")
-    gid = await _group_id(grants_ds, "staff")
-    with pytest.raises(ValueError):
-        await grant(grants_ds, "doc", "42", actor_id="a", group_id=gid, role="Viewer")
+        await grant(
+            grants_ds,
+            "doc",
+            "42",
+            principal=Principal.actor("alice"),
+            role="Nope",
+        )
 
 
 @pytest.mark.asyncio
 async def test_grant_requires_exactly_one_of_role_or_actions(grants_ds):
     with pytest.raises(ValueError):
-        await grant(grants_ds, "doc", "42", actor_id="a")
+        await grant(grants_ds, "doc", "42", principal=Principal.actor("a"))
     with pytest.raises(ValueError):
         await grant(
-            grants_ds, "doc", "42", actor_id="a", role="Viewer", actions=["doc-view"]
+            grants_ds,
+            "doc",
+            "42",
+            principal=Principal.actor("a"),
+            role="Viewer",
+            actions=["doc-view"],
         )
 
 
@@ -269,17 +298,50 @@ async def test_grant_requires_exactly_one_of_role_or_actions(grants_ds):
 
 @pytest.mark.asyncio
 async def test_revoke_removes_all_rows(grants_ds):
-    await grant(grants_ds, "doc", "42", actor_id="alice", role="Manager", by_actor="root")
-    removed = await revoke(grants_ds, "doc", "42", actor_id="alice", by_actor="root")
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Manager",
+        by_actor="root",
+    )
+    removed = await revoke(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        by_actor="root",
+    )
     assert removed == ["doc-edit", "doc-manage", "doc-view"]
     assert await _actions_for(grants_ds, "alice") == []
 
 
 @pytest.mark.asyncio
 async def test_revoke_only_targets_principal(grants_ds):
-    await grant(grants_ds, "doc", "42", actor_id="alice", role="Editor", by_actor="root")
-    await grant(grants_ds, "doc", "42", actor_id="bob", role="Viewer", by_actor="root")
-    await revoke(grants_ds, "doc", "42", actor_id="alice", by_actor="root")
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Editor",
+        by_actor="root",
+    )
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("bob"),
+        role="Viewer",
+        by_actor="root",
+    )
+    await revoke(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        by_actor="root",
+    )
     assert await _actions_for(grants_ds, "alice") == []
     assert await _actions_for(grants_ds, "bob") == ["doc-view"]
 
@@ -289,9 +351,21 @@ async def test_revoke_only_targets_principal(grants_ds):
 
 @pytest.mark.asyncio
 async def test_update_role_swaps_atomically(grants_ds):
-    await grant(grants_ds, "doc", "42", actor_id="alice", role="Manager", by_actor="root")
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Manager",
+        by_actor="root",
+    )
     result = await update_role(
-        grants_ds, "doc", "42", actor_id="alice", role="Viewer", by_actor="root"
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Viewer",
+        by_actor="root",
     )
     assert result == ["doc-view"]
     # Only doc-view remains: doc-edit and doc-manage removed
@@ -300,9 +374,21 @@ async def test_update_role_swaps_atomically(grants_ds):
 
 @pytest.mark.asyncio
 async def test_update_role_upgrades(grants_ds):
-    await grant(grants_ds, "doc", "42", actor_id="alice", role="Viewer", by_actor="root")
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Viewer",
+        by_actor="root",
+    )
     result = await update_role(
-        grants_ds, "doc", "42", actor_id="alice", role="Editor", by_actor="root"
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Editor",
+        by_actor="root",
     )
     assert result == ["doc-edit", "doc-view"]
     assert await _actions_for(grants_ds, "alice") == ["doc-edit", "doc-view"]
@@ -313,11 +399,29 @@ async def test_update_role_upgrades(grants_ds):
 
 @pytest.mark.asyncio
 async def test_audit_rows_written(grants_ds):
-    await grant(grants_ds, "doc", "42", actor_id="alice", role="Editor", by_actor="root")
-    await update_role(
-        grants_ds, "doc", "42", actor_id="alice", role="Viewer", by_actor="admin"
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Editor",
+        by_actor="root",
     )
-    await revoke(grants_ds, "doc", "42", actor_id="alice", by_actor="root")
+    await update_role(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Viewer",
+        by_actor="admin",
+    )
+    await revoke(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        by_actor="root",
+    )
     ops = await _audit_ops(grants_ds)
     # grant Editor: +doc-view +doc-edit; update to Viewer: -doc-edit;
     # revoke: -doc-view
@@ -336,8 +440,22 @@ async def test_audit_rows_written(grants_ds):
 @pytest.mark.asyncio
 async def test_list_grants_actor_and_group(grants_ds):
     gid = await _group_id(grants_ds, "staff")
-    await grant(grants_ds, "doc", "42", actor_id="alice", role="Editor", by_actor="root")
-    await grant(grants_ds, "doc", "42", group_id=gid, role="Viewer", by_actor="root")
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Editor",
+        by_actor="root",
+    )
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.group(gid),
+        role="Viewer",
+        by_actor="root",
+    )
     grants = await list_grants(grants_ds, "doc", "42")
     assert grants == [
         {
@@ -369,10 +487,29 @@ async def test_list_grants_public_principal_and_ordering(grants_ds):
     # then groups, then audiences.
     gid = await _group_id(grants_ds, "staff")
     await grant(
-        grants_ds, "doc", "42", principal_type="everyone", role="Viewer", by_actor="root"
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.public("everyone"),
+        role="Viewer",
+        by_actor="root",
     )
-    await grant(grants_ds, "doc", "42", actor_id="alice", role="Editor", by_actor="root")
-    await grant(grants_ds, "doc", "42", group_id=gid, role="Viewer", by_actor="root")
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Editor",
+        by_actor="root",
+    )
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.group(gid),
+        role="Viewer",
+        by_actor="root",
+    )
     grants = await list_grants(grants_ds, "doc", "42")
     assert [(g["principal"], g["actor_id"], g["group_id"]) for g in grants] == [
         ("actor", "alice", None),
@@ -381,50 +518,49 @@ async def test_list_grants_public_principal_and_ordering(grants_ds):
     ]
 
 
-# --- principal_type -------------------------------------------------------
+# --- Principal ------------------------------------------------------------
 
 
-def test_principal_type_for():
+def test_principal_constructors():
+    assert Principal.actor("alice") == Principal("actor", actor_id="alice")
+    assert Principal.group(1) == Principal("group", group_id=1)
+    assert Principal.everyone() == Principal("everyone")
+    assert Principal.authenticated() == Principal("authenticated")
+    assert Principal.anonymous() == Principal("anonymous")
+    assert Principal.public("everyone") == Principal("everyone")
+    # public() rejects names that aren't a known audience
+    with pytest.raises(ValueError):
+        Principal.public("actor")
+
+
+def test_principal_from_parts():
     # Resolution from whichever id was supplied
-    assert principal_type_for("alice", None) == "actor"
-    assert principal_type_for(None, 1) == "group"
+    assert Principal.from_parts("alice", None) == Principal.actor("alice")
+    assert Principal.from_parts(None, 1) == Principal.group(1)
     # Redundant explicit types are accepted alongside the matching id
-    assert principal_type_for("alice", None, "actor") == "actor"
-    assert principal_type_for(None, 1, "group") == "group"
+    assert Principal.from_parts("alice", None, "actor") == Principal.actor("alice")
+    assert Principal.from_parts(None, 1, "group") == Principal.group(1)
     # Public audiences are named by principal_type alone, with no id
-    assert principal_type_for(None, None, "everyone") == "everyone"
-    assert principal_type_for(None, None, "authenticated") == "authenticated"
-    assert principal_type_for(None, None, "anonymous") == "anonymous"
+    assert Principal.from_parts(None, None, "everyone") == Principal.everyone()
+    assert Principal.from_parts(None, None, "authenticated") == Principal.authenticated()
+    assert Principal.from_parts(None, None, "anonymous") == Principal.anonymous()
     # Invalid combinations
     with pytest.raises(ValueError):
-        principal_type_for("bob", None, "everyone")  # audience with actor_id
+        Principal.from_parts("bob", None, "everyone")  # audience with actor_id
     with pytest.raises(ValueError):
-        principal_type_for(None, 1, "anonymous")  # audience with group_id
+        Principal.from_parts(None, 1, "anonymous")  # audience with group_id
     with pytest.raises(ValueError):
-        principal_type_for("bob", None, "group")  # group needs group_id
+        Principal.from_parts("bob", None, "group")  # group needs group_id
     with pytest.raises(ValueError):
-        principal_type_for(None, 1, "actor")  # group_id with actor type
+        Principal.from_parts(None, 1, "actor")  # group_id with actor type
     with pytest.raises(ValueError):
-        principal_type_for("bob", None, "alien")  # unknown type
+        Principal.from_parts("bob", None, "alien")  # unknown type
     with pytest.raises(ValueError):
-        principal_type_for(None, None)  # no principal
+        Principal.from_parts(None, None)  # no principal
     with pytest.raises(ValueError):
-        principal_type_for(None, None, "actor")  # actor type without an id
+        Principal.from_parts(None, None, "actor")  # actor type without an id
     with pytest.raises(ValueError):
-        principal_type_for("bob", 1)  # both ids
-
-
-@pytest.mark.asyncio
-async def test_grant_audience_with_actor_id_raises(grants_ds):
-    with pytest.raises(ValueError):
-        await grant(
-            grants_ds,
-            "doc",
-            "42",
-            actor_id="bob",
-            role="Viewer",
-            principal_type="everyone",
-        )
+        Principal.from_parts("bob", 1)  # both ids
 
 
 @pytest.mark.asyncio
@@ -452,7 +588,14 @@ async def test_insert_grant_dedupes(grants_ds):
     # read-modify-write guard -- yield one row: the partial unique indexes
     # actually enforce non-duplication (the old UNIQUE constraint never fired
     # across its always-NULL columns).
-    await grant(grants_ds, "doc", "42", actor_id="alice", role="Viewer", by_actor="root")
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Viewer",
+        by_actor="root",
+    )
     db = grants_ds.get_internal_database()
     resource_id = (
         await db.execute(
@@ -461,7 +604,7 @@ async def test_insert_grant_dedupes(grants_ds):
     ).single_value()
     for _ in range(2):
         await _insert_grant(
-            db, resource_id, "actor", "alice", None, "doc-view", "root"
+            db, resource_id, Principal.actor("alice"), "doc-view", "root"
         )
     count = (
         await db.execute("select count(*) from acl where actor_id = 'alice'")
@@ -470,7 +613,7 @@ async def test_insert_grant_dedupes(grants_ds):
     # Same for a public audience (covered by acl_public_unique)
     for _ in range(2):
         await _insert_grant(
-            db, resource_id, "everyone", None, None, "doc-view", "root"
+            db, resource_id, Principal.everyone(), "doc-view", "root"
         )
     count = (
         await db.execute(

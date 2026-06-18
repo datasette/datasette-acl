@@ -136,15 +136,13 @@ async def _group_id(datasette, name):
 
 
 async def _audit_ops(datasette):
-    rows = await datasette.get_internal_database().execute(
-        """
+    rows = await datasette.get_internal_database().execute("""
         SELECT acl_audit.operation, acl_audit.actor_id, acl_audit.group_id,
                acl_actions.name AS action_name, acl_audit.operation_by
         FROM acl_audit
         JOIN acl_actions ON acl_audit.action_id = acl_actions.id
         ORDER BY acl_audit.id
-        """
-    )
+        """)
     return [dict(r) for r in rows.rows]
 
 
@@ -542,7 +540,9 @@ def test_principal_from_parts():
     assert Principal.from_parts(None, 1, "group") == Principal.group(1)
     # Public audiences are named by principal_type alone, with no id
     assert Principal.from_parts(None, None, "everyone") == Principal.everyone()
-    assert Principal.from_parts(None, None, "authenticated") == Principal.authenticated()
+    assert (
+        Principal.from_parts(None, None, "authenticated") == Principal.authenticated()
+    )
     assert Principal.from_parts(None, None, "anonymous") == Principal.anonymous()
     # Invalid combinations
     with pytest.raises(ValueError):
@@ -572,14 +572,12 @@ async def test_raw_audience_insert_with_actor_id_rejected(grants_ds):
 
     db = grants_ds.get_internal_database()
     with pytest.raises(sqlite3.IntegrityError):
-        await db.execute_write(
-            """
+        await db.execute_write("""
             insert into acl (principal_type, actor_id, group_id, resource_id, action_id)
             values ('everyone', 'bob', null,
                 (select min(id) from acl_resources),
                 (select min(id) from acl_actions))
-            """
-        )
+            """)
 
 
 @pytest.mark.asyncio
@@ -612,12 +610,8 @@ async def test_insert_grant_dedupes(grants_ds):
     assert count == 1
     # Same for a public audience (covered by acl_public_unique)
     for _ in range(2):
-        await _insert_grant(
-            db, resource_id, Principal.everyone(), "doc-view", "root"
-        )
+        await _insert_grant(db, resource_id, Principal.everyone(), "doc-view", "root")
     count = (
-        await db.execute(
-            "select count(*) from acl where principal_type = 'everyone'"
-        )
+        await db.execute("select count(*) from acl where principal_type = 'everyone'")
     ).single_value()
     assert count == 1

@@ -6,7 +6,6 @@ from datasette_acl.internal_migrations import internal_migrations
 from sqlite_utils import Database
 import pytest
 
-
 ManageTableTest = namedtuple(
     "ManageTableTest",
     (
@@ -292,11 +291,7 @@ async def test_manage_table_permissions(
     assert response.status_code == 302
 
     # Check ACLs
-    acls = [
-        dict(r)
-        for r in (
-            await internal_db.execute(
-                """
+    acls = [dict(r) for r in (await internal_db.execute("""
         select
           acl_groups.name as group_name,
           acl.actor_id,
@@ -307,10 +302,7 @@ async def test_manage_table_permissions(
         left join acl_groups on acl.group_id = acl_groups.id
         join acl_actions on acl.action_id = acl_actions.id
         join acl_resources on acl.resource_id = acl_resources.id
-    """
-            )
-        )
-    ]
+    """))]
     assert acls == expected_acls
 
     # Permission checks should pass now
@@ -382,17 +374,10 @@ async def test_update_dynamic_groups():
     ]
     # Should record an added groups audit record
     assert (
-        [
-            dict(r)
-            for r in (
-                await db.execute(
-                    """
+        [dict(r) for r in (await db.execute("""
             select operation, operation_by, group_id, actor_id
             from acl_groups_audit
-        """
-                )
-            ).rows
-        ]
+        """)).rows]
         == [
             {
                 "operation": "added",
@@ -426,17 +411,10 @@ async def test_update_dynamic_groups():
     ] == []
     # Should record a removed groups audit record
     assert (
-        [
-            dict(r)
-            for r in (
-                await db.execute(
-                    """
+        [dict(r) for r in (await db.execute("""
             select operation, operation_by, group_id, actor_id
             from acl_groups_audit order by id desc limit 1
-        """
-                )
-            ).rows
-        ]
+        """)).rows]
         == [
             {
                 "operation": "removed",
@@ -493,11 +471,7 @@ async def test_table_creator_permissions():
     )
     assert create_response.status_code == 201
     # That table should have insert-row and delete-row ACLs
-    acls = [
-        dict(r)
-        for r in (
-            await datasette.get_internal_database().execute(
-                """
+    acls = [dict(r) for r in (await datasette.get_internal_database().execute("""
         select
           acl.actor_id,
           acl_actions.name as action_name,
@@ -508,10 +482,7 @@ async def test_table_creator_permissions():
         join acl_resources on acl.resource_id = acl_resources.id
         where acl_resources.parent = 'db'
         and acl_resources.child = 'new_table'
-    """
-            )
-        )
-    ]
+    """))]
     assert acls == [
         {
             "actor_id": "simon",
@@ -579,9 +550,16 @@ def test_acl_schema_constraints():
 
     # The partial unique indexes dedupe per kind: re-inserting an existing
     # (actor / group / audience) grant with OR IGNORE is a no-op.
-    db.execute(insert.replace("insert into", "insert or ignore into"), ["actor", "alice", None])
-    db.execute(insert.replace("insert into", "insert or ignore into"), ["group", None, 1])
-    db.execute(insert.replace("insert into", "insert or ignore into"), ["authenticated", None, None])
+    db.execute(
+        insert.replace("insert into", "insert or ignore into"), ["actor", "alice", None]
+    )
+    db.execute(
+        insert.replace("insert into", "insert or ignore into"), ["group", None, 1]
+    )
+    db.execute(
+        insert.replace("insert into", "insert or ignore into"),
+        ["authenticated", None, None],
+    )
     assert db.execute("select count(*) from acl").fetchone()[0] == 3
 
     # An actor whose id merely looks like an old wildcard is an ordinary actor

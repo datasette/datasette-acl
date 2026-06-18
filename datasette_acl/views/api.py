@@ -232,13 +232,9 @@ def _parse_json_body(request_body):
 async def _enriched_grant(datasette, roles, principal: Principal, actions):
     """Build the enriched grant entry for whichever principal was supplied."""
     if principal.principal_type == "actor":
-        return await _actor_grant_entry(
-            datasette, roles, principal.actor_id, actions
-        )
+        return await _actor_grant_entry(datasette, roles, principal.actor_id, actions)
     if principal.principal_type == "group":
-        return await _group_grant_entry(
-            datasette, roles, principal.group_id, actions
-        )
+        return await _group_grant_entry(datasette, roles, principal.group_id, actions)
     role = role_for_actions(roles, set(actions))
     return _public_entry(principal.principal_type, role, actions)
 
@@ -449,8 +445,7 @@ async def groups_json(request, datasette):
     """
     await _ensure_can_pick(datasette, request, "Cannot list groups")
     db = datasette.get_internal_database()
-    rows = await db.execute(
-        """
+    rows = await db.execute("""
         SELECT
             acl_groups.id AS id,
             acl_groups.name AS name,
@@ -460,8 +455,7 @@ async def groups_json(request, datasette):
         WHERE acl_groups.deleted IS NULL
         GROUP BY acl_groups.id, acl_groups.name
         ORDER BY acl_groups.name
-        """
-    )
+        """)
     groups = [
         {"id": row["id"], "name": row["name"], "member_count": row["member_count"]}
         for row in rows.rows
@@ -520,13 +514,13 @@ async def _valid_actors_fallback(datasette, q):
     needle = (q or "").lower()
     results = []
     for actor_id, display in actors:
-        if needle and needle not in actor_id.lower() and needle not in (
-            display or ""
-        ).lower():
+        if (
+            needle
+            and needle not in actor_id.lower()
+            and needle not in (display or "").lower()
+        ):
             continue
-        results.append(
-            {"id": actor_id, "display_name": display, "kind": "user"}
-        )
+        results.append({"id": actor_id, "display_name": display, "kind": "user"})
     return results
 
 

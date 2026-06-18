@@ -137,8 +137,7 @@ def datasette_acl_valid_actors(datasette):
 def startup(datasette):
     async def inner():
         db = datasette.get_internal_database()
-        await db.execute_write(
-            """
+        await db.execute_write("""
             CREATE TABLE IF NOT EXISTS widgets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -146,8 +145,7 @@ def startup(datasette):
                 created_at TEXT NOT NULL
                     DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             )
-            """
-        )
+            """)
 
     return inner
 
@@ -205,9 +203,7 @@ async def widgets_index(request, datasette):
             role="Manager",
             by_actor=actor_id,
         )
-        datasette.add_message(
-            request, f"Widget '{name}' created — you are its Manager"
-        )
+        datasette.add_message(request, f"Widget '{name}' created — you are its Manager")
         return Response.redirect(datasette.urls.path(f"/-/widgets/{widget_id}"))
 
     # Only list widgets the current actor may view, tagged with their role —
@@ -237,9 +233,7 @@ async def widgets_index(request, datasette):
 async def widget_page(request, datasette):
     db = datasette.get_internal_database()
     widget_id = request.url_vars["id"]
-    row = (
-        await db.execute("SELECT * FROM widgets WHERE id = ?", [widget_id])
-    ).first()
+    row = (await db.execute("SELECT * FROM widgets WHERE id = ?", [widget_id])).first()
     if row is None:
         return Response.html("Widget not found", status=404)
 

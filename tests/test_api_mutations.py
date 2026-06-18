@@ -66,9 +66,7 @@ class ApiMutationPlugin:
         return [
             Action(name="doc-view", description="View", resource_class=DocResource),
             Action(name="doc-edit", description="Edit", resource_class=DocResource),
-            Action(
-                name="doc-manage", description="Manage", resource_class=DocResource
-            ),
+            Action(name="doc-manage", description="Manage", resource_class=DocResource),
         ]
 
     @hookimpl
@@ -88,9 +86,7 @@ async def api_ds():
     plugin = ApiMutationPlugin()
     pm.register(plugin, name="api-mutation-plugin")
     try:
-        datasette = Datasette(
-            config={"permissions": {"datasette-acl": {"id": "root"}}}
-        )
+        datasette = Datasette(config={"permissions": {"datasette-acl": {"id": "root"}}})
         await datasette.invoke_startup()
         await datasette.get_internal_database().execute_write(
             "INSERT INTO acl_groups (name) VALUES ('staff')"
@@ -308,7 +304,9 @@ async def test_update_swaps_role(api_ds):
     assert bob["actions"] == ["doc-view"]
 
     audit = await _audit_rows(api_ds)
-    removed = [r for r in audit if r["operation"] == "removed" and r["actor_id"] == "bob"]
+    removed = [
+        r for r in audit if r["operation"] == "removed" and r["actor_id"] == "bob"
+    ]
     # Manager -> Viewer drops doc-edit and doc-manage.
     assert {r["operation_by"] for r in removed} == {"root"}
     assert len(removed) == 2
@@ -339,7 +337,9 @@ async def test_revoke_removes_all(api_ds):
     assert [g for g in grants if g["actor_id"] == "bob"] == []
 
     audit = await _audit_rows(api_ds)
-    removed = [r for r in audit if r["operation"] == "removed" and r["actor_id"] == "bob"]
+    removed = [
+        r for r in audit if r["operation"] == "removed" and r["actor_id"] == "bob"
+    ]
     assert len(removed) == 3
     assert all(r["operation_by"] == "root" for r in removed)
 
@@ -385,7 +385,9 @@ async def test_non_manager_cannot_grant(api_ds):
 
 @pytest.mark.asyncio
 async def test_anonymous_cannot_grant(api_ds):
-    response = await _post(api_ds, GRANT_URL, json={"actor_id": "bob", "role": "Viewer"})
+    response = await _post(
+        api_ds, GRANT_URL, json={"actor_id": "bob", "role": "Viewer"}
+    )
     assert response.status_code == 403
 
 
@@ -593,7 +595,9 @@ async def test_html_page_manager_can_view(api_ds):
         role="Manager",
         by_actor="root",
     )
-    response = await api_ds.client.get(HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory"))
+    response = await api_ds.client.get(
+        HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory")
+    )
     assert response.status_code == 200
 
 
@@ -637,14 +641,18 @@ async def test_html_page_group_manager_can_view(api_ds):
         role="Manager",
         by_actor="root",
     )
-    response = await api_ds.client.get(HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory"))
+    response = await api_ds.client.get(
+        HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory")
+    )
     assert response.status_code == 200
 
 
 @pytest.mark.asyncio
 async def test_html_page_non_manager_forbidden(api_ds):
     # No role on the resource and not the global admin -> 403.
-    response = await api_ds.client.get(HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory"))
+    response = await api_ds.client.get(
+        HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory")
+    )
     assert response.status_code == 403
 
 
@@ -659,7 +667,9 @@ async def test_html_page_non_manage_role_forbidden(api_ds):
         role="Editor",
         by_actor="root",
     )
-    response = await api_ds.client.get(HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory"))
+    response = await api_ds.client.get(
+        HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory")
+    )
     assert response.status_code == 403
 
 

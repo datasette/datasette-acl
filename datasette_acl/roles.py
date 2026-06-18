@@ -84,12 +84,8 @@ def standard_roles(
 
     descriptions = descriptions or {}
     view_actions = as_list(view)
-    edit_actions = view_actions + [
-        a for a in as_list(edit) if a not in view_actions
-    ]
-    full_actions = edit_actions + [
-        a for a in as_list(manage) if a not in edit_actions
-    ]
+    edit_actions = view_actions + [a for a in as_list(edit) if a not in view_actions]
+    full_actions = edit_actions + [a for a in as_list(manage) if a not in edit_actions]
     return [
         AclRole(
             resource_type,
@@ -147,9 +143,7 @@ def roles_for(datasette: Datasette, resource_type: str) -> List[AclRole]:
     return build_roles_registry(datasette).get(resource_type, [])
 
 
-def role_for_actions(
-    roles: List[AclRole], granted: Set[str]
-) -> Optional[AclRole]:
+def role_for_actions(roles: List[AclRole], granted: Set[str]) -> Optional[AclRole]:
     """Pick the highest-rank role whose actions are a subset of ``granted``.
 
     Returns the matching :class:`AclRole`, or ``None`` if no role's action set

@@ -72,9 +72,7 @@ class ApiDocPlugin:
         return [
             Action(name="doc-view", description="View", resource_class=DocResource),
             Action(name="doc-edit", description="Edit", resource_class=DocResource),
-            Action(
-                name="doc-manage", description="Manage", resource_class=DocResource
-            ),
+            Action(name="doc-manage", description="Manage", resource_class=DocResource),
         ]
 
     @hookimpl
@@ -96,9 +94,7 @@ async def api_ds():
     plugin = ApiDocPlugin()
     pm.register(plugin, name="api-doc-plugin")
     try:
-        datasette = Datasette(
-            config={"permissions": {"datasette-acl": {"id": "root"}}}
-        )
+        datasette = Datasette(config={"permissions": {"datasette-acl": {"id": "root"}}})
         await datasette.invoke_startup()
         await datasette.get_internal_database().execute_write(
             "INSERT INTO acl_groups (name) VALUES ('staff')"

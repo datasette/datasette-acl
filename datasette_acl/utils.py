@@ -85,9 +85,7 @@ def resource_class_for(
     return None
 
 
-def actions_for_resource_type(
-    datasette: Datasette, resource_type: str
-) -> List[str]:
+def actions_for_resource_type(datasette: Datasette, resource_type: str) -> List[str]:
     """Action names whose resource_class.name == resource_type, in registration order."""
     return [
         action.name

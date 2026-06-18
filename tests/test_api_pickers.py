@@ -43,9 +43,7 @@ async def groups_ds():
     await db.execute_write("INSERT INTO acl_groups (name) VALUES ('staff')")
     await db.execute_write("INSERT INTO acl_groups (name) VALUES ('admins')")
     # A soft-deleted group must not appear in the picker.
-    await db.execute_write(
-        "INSERT INTO acl_groups (name, deleted) VALUES ('old', 1)"
-    )
+    await db.execute_write("INSERT INTO acl_groups (name, deleted) VALUES ('old', 1)")
     # Members so member_count is exercised.
     staff_id = (
         await db.execute("SELECT id FROM acl_groups WHERE name = 'staff'")
@@ -101,9 +99,7 @@ class ValidActorsPlugin:
 async def fallback_ds():
     pm.register(ValidActorsPlugin(), name="valid-actors-plugin")
     try:
-        datasette = Datasette(
-            config={"permissions": {"datasette-acl": {"id": "root"}}}
-        )
+        datasette = Datasette(config={"permissions": {"datasette-acl": {"id": "root"}}})
         await datasette.invoke_startup()
         yield datasette
         db = datasette.get_internal_database()
@@ -198,9 +194,7 @@ class FakeProfilesPlugin:
 async def profiles_ds():
     pm.register(FakeProfilesPlugin(), name="fake-profiles-plugin")
     try:
-        datasette = Datasette(
-            config={"permissions": {"datasette-acl": {"id": "root"}}}
-        )
+        datasette = Datasette(config={"permissions": {"datasette-acl": {"id": "root"}}})
         await datasette.invoke_startup()
         yield datasette
         db = datasette.get_internal_database()
@@ -274,9 +268,7 @@ class GatedProfilesPlugin:
 async def gated_profiles_ds():
     pm.register(GatedProfilesPlugin(), name="gated-profiles-plugin")
     try:
-        datasette = Datasette(
-            config={"permissions": {"datasette-acl": {"id": "root"}}}
-        )
+        datasette = Datasette(config={"permissions": {"datasette-acl": {"id": "root"}}})
         await datasette.invoke_startup()
         yield datasette
         db = datasette.get_internal_database()
@@ -347,9 +339,7 @@ class DocPickerPlugin:
         return [
             Action(name="doc-view", description="View", resource_class=DocResource),
             Action(name="doc-edit", description="Edit", resource_class=DocResource),
-            Action(
-                name="doc-manage", description="Manage", resource_class=DocResource
-            ),
+            Action(name="doc-manage", description="Manage", resource_class=DocResource),
         ]
 
     @hookimpl
@@ -361,9 +351,7 @@ class DocPickerPlugin:
 async def resource_ds():
     pm.register(DocPickerPlugin(), name="doc-picker-plugin")
     try:
-        datasette = Datasette(
-            config={"permissions": {"datasette-acl": {"id": "root"}}}
-        )
+        datasette = Datasette(config={"permissions": {"datasette-acl": {"id": "root"}}})
         await datasette.invoke_startup()
         db = datasette.get_internal_database()
         await db.execute_write("INSERT INTO acl_groups (name) VALUES ('staff')")
@@ -447,7 +435,5 @@ async def test_global_admin_still_works_without_resource(resource_ds):
     # root holds the global datasette-acl permission → pickers work with no
     # resource params (back-compat).
     for path in ("/-/acl/api/groups", "/-/acl/api/actors"):
-        response = await resource_ds.client.get(
-            path, cookies=_root_cookie(resource_ds)
-        )
+        response = await resource_ds.client.get(path, cookies=_root_cookie(resource_ds))
         assert response.status_code == 200

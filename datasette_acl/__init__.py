@@ -82,6 +82,7 @@ def startup(datasette):
                 "insert or ignore into acl_groups (name) values (:name)",
                 [{"name": name} for name in groups.keys()],
             )
+
     return inner
 
 

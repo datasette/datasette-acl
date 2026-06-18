@@ -194,9 +194,7 @@ async def test_direct_grant_on_custom_resource(widget_ds):
         child="gadget",
         action="widget-view",
     )
-    assert await widget_ds.allowed(
-        action="widget-view", resource=resource, actor=actor
-    )
+    assert await widget_ds.allowed(action="widget-view", resource=resource, actor=actor)
     # A different actor is still denied
     assert not await widget_ds.allowed(
         action="widget-view", resource=resource, actor={"id": "bob"}
@@ -208,12 +206,10 @@ async def test_group_grant_on_custom_resource(widget_ds):
     # Put alice in the widgets group and grant the group access
     db = widget_ds.get_internal_database()
     await db.execute_write("INSERT OR IGNORE INTO acl_groups (name) VALUES ('widgets')")
-    await db.execute_write(
-        """
+    await db.execute_write("""
         INSERT INTO acl_actor_groups (actor_id, group_id)
         VALUES ('alice', (SELECT id FROM acl_groups WHERE name = 'widgets'))
-        """
-    )
+        """)
     await _grant_group(
         widget_ds,
         group_name="widgets",
@@ -282,9 +278,7 @@ async def test_everyone_public_grant(widget_ds):
         action="widget-view",
     )
     resource = WidgetResource("shelf", "gadget")
-    assert await widget_ds.allowed(
-        action="widget-view", resource=resource, actor=None
-    )
+    assert await widget_ds.allowed(action="widget-view", resource=resource, actor=None)
     assert await widget_ds.allowed(
         action="widget-view", resource=resource, actor={"id": "anyone"}
     )
@@ -303,9 +297,7 @@ async def test_anonymous_public_grant(widget_ds):
         action="widget-view",
     )
     resource = WidgetResource("shelf", "gadget")
-    assert await widget_ds.allowed(
-        action="widget-view", resource=resource, actor=None
-    )
+    assert await widget_ds.allowed(action="widget-view", resource=resource, actor=None)
     assert not await widget_ds.allowed(
         action="widget-view", resource=resource, actor={"id": "anyone"}
     )
@@ -327,9 +319,7 @@ async def test_anonymous_grant_never_matches_a_signed_in_actor(widget_ds):
     )
     assert response.status_code == 302
     # Anonymous callers are allowed
-    assert await widget_ds.allowed(
-        action="widget-view", resource=resource, actor=None
-    )
+    assert await widget_ds.allowed(action="widget-view", resource=resource, actor=None)
     # Signed-in actors are denied, even ones with legacy-wildcard-looking ids
     for actor_id in ("_anonymous", "anonymous", "*", "_signed_in"):
         assert not await widget_ds.allowed(
@@ -387,9 +377,7 @@ async def test_public_and_actor_grants_coexist(widget_ds):
         actions=["widget-view"],
         by_actor="root",
     )
-    assert await widget_ds.allowed(
-        action="widget-view", resource=resource, actor=None
-    )
+    assert await widget_ds.allowed(action="widget-view", resource=resource, actor=None)
     assert await widget_ds.allowed(
         action="widget-view", resource=resource, actor={"id": "_anonymous"}
     )
@@ -509,11 +497,7 @@ async def test_generic_resource_view_grants_via_post(widget_ds):
 
     # The acl row exists for the right (resource_type, parent, child)
     internal_db = widget_ds.get_internal_database()
-    rows = [
-        dict(r)
-        for r in (
-            await internal_db.execute(
-                """
+    rows = [dict(r) for r in (await internal_db.execute("""
                 select
                   acl.actor_id,
                   acl_actions.name as action_name,
@@ -523,10 +507,7 @@ async def test_generic_resource_view_grants_via_post(widget_ds):
                 from acl
                 join acl_actions on acl.action_id = acl_actions.id
                 join acl_resources on acl.resource_id = acl_resources.id
-                """
-            )
-        )
-    ]
+                """))]
     assert rows == [
         {
             "actor_id": "alice",
@@ -538,9 +519,7 @@ async def test_generic_resource_view_grants_via_post(widget_ds):
     ]
 
     # And datasette.allowed reflects the new grant
-    assert await widget_ds.allowed(
-        action="widget-edit", resource=resource, actor=actor
-    )
+    assert await widget_ds.allowed(action="widget-edit", resource=resource, actor=actor)
     # The other action is still denied
     assert not await widget_ds.allowed(
         action="widget-view", resource=resource, actor=actor
@@ -573,9 +552,7 @@ async def test_generic_resource_view_grants_public_via_post(widget_ds):
     )
     assert response.status_code == 302
     # 'everyone' exposes the resource to anyone, including anonymous
-    assert await widget_ds.allowed(
-        action="widget-view", resource=resource, actor=None
-    )
+    assert await widget_ds.allowed(action="widget-view", resource=resource, actor=None)
     assert await widget_ds.allowed(
         action="widget-view", resource=resource, actor={"id": "anyone"}
     )
@@ -632,9 +609,7 @@ async def test_generic_resource_view_revokes_via_post(widget_ds):
         child="gadget",
         action="widget-edit",
     )
-    assert await widget_ds.allowed(
-        action="widget-edit", resource=resource, actor=actor
-    )
+    assert await widget_ds.allowed(action="widget-edit", resource=resource, actor=actor)
     # POST with the existing user's checkbox unchecked removes the grant
     response = await widget_ds.client.post(
         "/-/acl/resource/widget/shelf/gadget",

@@ -136,8 +136,7 @@ class Principal:
             return cls("group", group_id=group_id)
         if principal_type not in (None, "actor"):
             raise ValueError(
-                f"principal_type {principal_type!r} cannot be used "
-                "with actor_id="
+                f"principal_type {principal_type!r} cannot be used " "with actor_id="
             )
         return cls("actor", actor_id=actor_id)
 
@@ -235,9 +234,7 @@ async def _ensure_resource_id(
         "INSERT INTO acl_resources (resource_type, parent, child) VALUES (?, ?, ?)",
         [resource_type, parent, child],
     )
-    return (
-        await db.execute(select_sql, [resource_type, parent, child])
-    ).single_value()
+    return (await db.execute(select_sql, [resource_type, parent, child])).single_value()
 
 
 async def _ensure_actions(db: Database, actions: Iterable[str]) -> None:

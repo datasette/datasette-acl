@@ -33,8 +33,13 @@ class DocResource(Resource):
 # Roles declared for the mock-doc resource type, deliberately registered out of
 # rank order to prove the registry sorts/resolves correctly.
 MOCK_ROLES = [
-    AclRole("mock-doc", "Manager", ["doc-view", "doc-edit", "doc-manage"],
-            rank=3, manage=True),
+    AclRole(
+        "mock-doc",
+        "Manager",
+        ["doc-view", "doc-edit", "doc-manage"],
+        rank=3,
+        manage=True,
+    ),
     AclRole("mock-doc", "Viewer", ["doc-view"], rank=1),
     AclRole("mock-doc", "Editor", ["doc-view", "doc-edit"], rank=2),
 ]
@@ -48,9 +53,7 @@ class MockDocPlugin:
         return [
             Action(name="doc-view", description="View", resource_class=DocResource),
             Action(name="doc-edit", description="Edit", resource_class=DocResource),
-            Action(
-                name="doc-manage", description="Manage", resource_class=DocResource
-            ),
+            Action(name="doc-manage", description="Manage", resource_class=DocResource),
         ]
 
     @hookimpl
@@ -62,9 +65,7 @@ class MockDocPlugin:
 async def doc_ds():
     pm.register(MockDocPlugin(), name="mock-doc-plugin")
     try:
-        datasette = Datasette(
-            config={"permissions": {"datasette-acl": {"id": "root"}}}
-        )
+        datasette = Datasette(config={"permissions": {"datasette-acl": {"id": "root"}}})
         await datasette.invoke_startup()
         yield datasette
         internal_db = datasette.get_internal_database()
@@ -93,16 +94,11 @@ def test_role_for_actions_picks_highest_rank_subset():
     assert role_for_actions(roles, {"doc-view"}).name == "Viewer"
     # Superset of Manager => Manager (highest rank whose actions are a subset)
     assert (
-        role_for_actions(
-            roles, {"doc-view", "doc-edit", "doc-manage", "extra"}
-        ).name
+        role_for_actions(roles, {"doc-view", "doc-edit", "doc-manage", "extra"}).name
         == "Manager"
     )
     # Granted spans Editor but not Manager (no doc-manage) => Editor
-    assert (
-        role_for_actions(roles, {"doc-view", "doc-edit", "other"}).name
-        == "Editor"
-    )
+    assert role_for_actions(roles, {"doc-view", "doc-edit", "other"}).name == "Editor"
 
 
 def test_role_for_actions_no_match_returns_none():
@@ -149,9 +145,7 @@ def test_manage_only_actions_empty_when_no_manage_role():
 
 
 def test_standard_roles_builds_canonical_triple():
-    roles = standard_roles(
-        "doc", view="doc-view", edit="doc-edit", manage="doc-manage"
-    )
+    roles = standard_roles("doc", view="doc-view", edit="doc-edit", manage="doc-manage")
     assert [(r.name, r.rank, r.manage) for r in roles] == [
         ("Viewer", 1, False),
         ("Editor", 2, False),

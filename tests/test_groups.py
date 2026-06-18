@@ -158,18 +158,11 @@ async def test_create_delete_group(ds):
     assert create_group_response.headers["location"] == "/-/acl/groups/sales"
 
     async def get_members():
-        return {
-            r[0]
-            for r in (
-                await internal_db.execute(
-                    """
+        return {r[0] for r in (await internal_db.execute("""
             select actor_id
             from acl_actor_groups
             where group_id = (select id from acl_groups where name = 'sales')
-        """
-                )
-            )
-        }
+        """))}
 
     assert await get_members() == set()
 
@@ -237,20 +230,13 @@ async def test_create_delete_group(ds):
     assert "sales (group)" in table_page2.text
 
     # Check the audit log
-    audit_rows = [
-        dict(r)
-        for r in (
-            await internal_db.execute(
-                """
+    audit_rows = [dict(r) for r in (await internal_db.execute("""
         select
           operation_by, operation, actor_id
         from acl_groups_audit
         where group_id = (select id from acl_groups where name = 'sales')
         order by id desc
-    """
-            )
-        )
-    ]
+    """))]
     assert audit_rows == [
         {"operation_by": "root", "operation": "deleted", "actor_id": None},
         {"operation_by": "root", "operation": "removed", "actor_id": "paulo"},

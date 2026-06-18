@@ -54,9 +54,7 @@ async def manage_resource_acls(request, datasette):
     # distinct in the UNIQUE(resource_type, parent, child) constraint, so a
     # naive insert would duplicate the row for a parent-only resource that the
     # JSON API (via grants._ensure_resource_id) already created.
-    resource_id = await _ensure_resource_id(
-        internal_db, resource_type, parent, child
-    )
+    resource_id = await _ensure_resource_id(internal_db, resource_type, parent, child)
 
     current_group_permissions = {}
     current_user_permissions = {}
@@ -87,9 +85,7 @@ async def manage_resource_acls(request, datasette):
                 action_name
             ] = True
         else:
-            current_user_permissions.setdefault(row["actor_id"], {})[
-                action_name
-            ] = True
+            current_user_permissions.setdefault(row["actor_id"], {})[action_name] = True
 
     if request.method == "POST":
         group_changes_made = {"added": [], "removed": []}
@@ -183,9 +179,7 @@ async def manage_resource_acls(request, datasette):
             for action_name in actions:
                 new_value = action_name in selected_public_actions
                 current_value = bool(
-                    current_public_permissions.get(principal_type, {}).get(
-                        action_name
-                    )
+                    current_public_permissions.get(principal_type, {}).get(action_name)
                 )
                 if new_value != current_value:
                     if new_value:
@@ -207,9 +201,7 @@ async def manage_resource_acls(request, datasette):
                             },
                         )
                         operation = "added"
-                        public_changes_made["added"].append(
-                            (display_name, action_name)
-                        )
+                        public_changes_made["added"].append((display_name, action_name))
                     else:
                         await internal_db.execute_write(
                             """
@@ -380,10 +372,7 @@ async def manage_resource_acls(request, datasette):
         [resource_id],
     )
 
-    group_sizes = {
-        row["name"]: row["size"]
-        for row in await internal_db.execute(
-            """
+    group_sizes = {row["name"]: row["size"] for row in await internal_db.execute("""
             select
                 acl_groups.name as name,
                 count(acl_actor_groups.actor_id) as size
@@ -395,9 +384,7 @@ async def manage_resource_acls(request, datasette):
                 acl_groups.deleted is null
             group by
                 acl_groups.id, acl_groups.name
-            """
-        )
-    }
+            """)}
 
     return Response.html(
         await datasette.render_template(

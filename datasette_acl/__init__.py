@@ -4,7 +4,6 @@ from datasette.permissions import Action, PermissionSQL
 from datasette.utils import actor_matches_allow
 from datasette.plugins import pm
 from datasette_acl.utils import can_edit_permissions
-from datasette_acl.views.table_acls import manage_table_acls
 from datasette_acl.views.resource_acls import manage_resource_acls
 from datasette_acl.views.groups import manage_groups, manage_group
 from datasette_acl.internal_migrations import internal_migrations
@@ -298,9 +297,11 @@ def table_actions(datasette, actor, database, table, request=None):
         if await can_edit_permissions(datasette, actor):
             return [
                 {
-                    "href": datasette.urls.table(database, table) + "/-/acl",
+                    "href": datasette.urls.path(
+                        f"/-/acl/resource/table/{database}/{table}"
+                    ),
                     "label": "Manage table permissions",
-                    "description": "Control who can  write, and delete rows in this table",
+                    "description": "Control who can write and delete rows in this table",
                 }
             ]
 
@@ -375,7 +376,6 @@ def menu_links(datasette, actor, request=None):
 @hookimpl
 def register_routes():
     return [
-        ("^/(?P<database>[^/]+)/(?P<table>[^/]+)/-/acl$", manage_table_acls),
         ("^/-/acl/groups$", manage_groups),
         ("^/-/acl/groups/(?P<name>[^/]+)$", manage_group),
         # Generic per-resource-type admin page. The child segment is optional

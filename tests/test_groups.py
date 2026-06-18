@@ -187,9 +187,11 @@ async def test_create_delete_group(ds):
     # Check the group has those members
     assert await get_members() == {"sally", "sam", "paulo"}
 
-    # It should be shown on the table permissions page
+    table_acl_url = "/-/acl/resource/table/db/t"
+
+    # It should be shown on the table resource permissions page
     table_page1 = await ds.client.get(
-        f"/db/t/-/acl",
+        table_acl_url,
         cookies={
             "ds_actor": ds.client.actor_cookie({"id": "root"}),
         },
@@ -198,7 +200,7 @@ async def test_create_delete_group(ds):
 
     # Add permissions for that group on that page, to test audit log later
     await ds.client.post(
-        "/db/t/-/acl",
+        table_acl_url,
         data={"group_permissions_sales": "insert-row"},
         cookies={
             "ds_actor": ds.client.actor_cookie({"id": "root"}),
@@ -223,16 +225,16 @@ async def test_create_delete_group(ds):
         await internal_db.execute("select deleted from acl_groups where name = 'sales'")
     ).single_value() == 1
 
-    # Should no longer show up on table ACL page
+    # Should no longer show up on table resource ACL page
     table_page2 = await ds.client.get(
-        f"/db/t/-/acl",
+        table_acl_url,
         cookies={
             "ds_actor": ds.client.actor_cookie({"id": "root"}),
         },
     )
     assert "/groups/sales" not in table_page2.text
     # But it should still be visible in the audit log's Principal column
-    assert "<td>sales (group)</td>" in table_page2.text
+    assert "sales (group)" in table_page2.text
 
     # Check the audit log
     audit_rows = [

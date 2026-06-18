@@ -31,13 +31,13 @@ A JSON HTTP API for reading and managing per-resource grants programmatically is
 
 ### Managing permissions for a table
 
-The interface for configuring table permissions lives at `/database-name/table-name/-/acl`. It can be accessed from the table actions menu on the table page.
+The interface for configuring table permissions lives at `/-/acl/resource/table/<database-name>/<table-name>`. It can be accessed from the table actions menu on the table page.
 
 Permission can be granted for each of the above table actions. They can be assigned to both groups and individual users, who can be added using their `actor["id"]`.
 
-The table page does not (yet) offer the **General access** section found on the generic resource page — to grant a table action to a public audience such as "any signed-in user", use the [JSON API](docs/json-api.md) or the [Python helpers](#python-api-for-managing-grants). See [Principals and general access](#principals-and-general-access).
+The page also offers a **General access** section for granting table actions to public audiences such as "any signed-in user". See [Principals and general access](#principals-and-general-access).
 
-An audit log tracks which permissions were added and removed, displayed at the bottom of the table permissions page.
+An audit log tracks which permissions were added and removed, displayed at the bottom of the permissions page.
 
 ### Custom resource types
 
@@ -62,7 +62,7 @@ def register_actions(datasette):
     ]
 ```
 
-`datasette-acl` discovers resource types from the actions registered across all plugins (`datasette.actions`). Both the action set offered on the table permissions page and the resource types managed by the generic admin page are derived dynamically from this - nothing is hardcoded.
+`datasette-acl` discovers resource types from the actions registered across all plugins (`datasette.actions`). The action set offered for each resource type is derived dynamically from this - nothing is hardcoded.
 
 A generic admin page for any resource type lives at:
 
@@ -70,7 +70,7 @@ A generic admin page for any resource type lives at:
 /-/acl/resource/<resource-type>/<parent>/<child>
 ```
 
-For example `/-/acl/resource/playlist/workspace-1/playlist-42`. The `<child>` segment is optional for parent-only resource types (`/-/acl/resource/<resource-type>/<parent>`). The page presents the same group/user grant interface and audit log as the table page, with checkboxes for exactly the actions registered for that resource type. Access to this admin page is gated on the `datasette-acl` permission described below.
+For example `/-/acl/resource/playlist/workspace-1/playlist-42`. The `<child>` segment is optional for parent-only resource types (`/-/acl/resource/<resource-type>/<parent>`). The page presents group, user, general-access grants and an audit log, with checkboxes for exactly the actions registered for that resource type. Access to this admin page is granted to users with the `datasette-acl` permission described below, or users who can manage that specific resource.
 
 The page also has a **General access** section for exposing a resource without naming individual users — see [Principals and general access](#principals-and-general-access) below.
 

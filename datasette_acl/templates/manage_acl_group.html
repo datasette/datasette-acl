@@ -5,37 +5,98 @@
 {% block extra_head %}
 <script src="{{ urls.static_plugins("datasette-acl", "choices-9.0.1.min.js") }}"></script>
 <link rel="stylesheet" href="{{ urls.static_plugins("datasette-acl", "choices-9.0.1.min.css") }}">
+<link rel="stylesheet" href="{{ urls.static_plugins("datasette-acl", "acl.css") }}">
 <style>
-.remove-button {
-  background-color: #fff;
-  border: 2px solid #ff4d4d;
-  color: #ff4d4d;
-  padding: 3px 6px;
-  margin-bottom: 0.3em;
-  font-weight: bold;
-  border-radius: 5px;
-  cursor: pointer;
-  transition: all 0.2s ease;
+.member-list-form {
+  max-width: 34rem;
 }
-.remove-button-margin-left {
-  margin-left: 2em;
+.member-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.65rem 0.8rem;
+  border-top: 1px solid var(--acl-border-soft);
 }
-.remove-button:hover {
-  background-color: #ffc4c4;
-  border-color: #ff3333;
-  color: #ff3333;
+.member-row:first-child {
+  border-top: 0;
 }
-.remove-button:active {
-  transform: scale(0.9);
+.member-id {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.98rem;
+  font-weight: 700;
+}
+.acl-dynamic-rule {
+  margin: 1rem 0 0;
+}
+.delete-button {
+  padding: 0.5rem 0.75rem;
 }
 table.audit {
-  border-collapse: collapse;
+  width: 100%;
+  border: 1px solid var(--acl-border);
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: 8px;
+  background: var(--acl-surface);
+  overflow: hidden;
+}
+table.audit th,
+table.audit td {
+  padding: 0.62rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+}
+table.audit th {
+  border-bottom: 1px solid var(--acl-border);
+  background: var(--acl-surface-soft);
+  color: var(--acl-muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 table.audit td {
-  border-top: 1px solid #aaa;
-  border-right: 1px solid #eee;
-  padding: 4px;
-  vertical-align: top;
+  border-top: 1px solid var(--acl-border-soft);
+}
+table.audit tbody tr:first-child td {
+  border-top: 0;
+}
+.audit-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.audit-actor,
+.audit-user {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.95rem;
+}
+.audit-operation {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: #eef6f1;
+  color: #276749;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.audit-operation.operation-created {
+  background: #edf4fb;
+  color: #2b5d7f;
+}
+.audit-operation.operation-removed,
+.audit-operation.operation-deleted {
+  background: #fff0f0;
+  color: #9f1d24;
+}
+@media (max-width: 640px) {
+  .member-row {
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+  }
+  .member-row .acl-danger-button {
+    justify-self: start;
+  }
 }
 </style>
 {% endblock %}
@@ -51,60 +112,72 @@ table.audit td {
 {% endblock %}
 
 {% block content %}
-<h1>{{ name }} ({{ size }})</h1>
+<div class="acl-page">
+<div class="acl-page-header">
+  <h1>{{ name }}</h1>
+  <span class="acl-badge">{{ size }} member{% if size != 1 %}s{% endif %}</span>
+</div>
 
-{% if is_deleted %}<p>This group has been deleted.</p>{% endif %}
+{% if is_deleted %}<p class="acl-status-note">This group has been deleted.</p>{% endif %}
 
 {% if dynamic_config %}
-<p>This is a <em>dynamic group</em>. You cannot manually edit the users in this group.</p>
+<p class="acl-status-note">This is a <em>dynamic group</em>. You cannot manually edit the users in this group.</p>
 
-<p>Users matching <code>{{ dynamic_config|tojson }}</code> will be automatically added to the group.</p>
+<p class="acl-dynamic-rule">Users matching <code>{{ dynamic_config|tojson }}</code> will be automatically added to the group.</p>
 
 {% if members %}
+  <section class="acl-section">
   <h2>Group members</h2>
-  <ul>
+  <div class="acl-panel-list">
     {% for member in members %}
-      <li>{{ member }}</li>
+      <div class="acl-panel-row member-row"><span class="member-id">{{ member }}</span></div>
     {% endfor %}
-  </ul>
+  </div>
+  </section>
   {% endif %}
 {% else %}
-<form action="{{ request.path }}" method="post">
+<form action="{{ request.path }}" method="post" class="member-list-form">
   <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
 {% if members %}
-<table>
+<div class="acl-panel-list" aria-label="Group members">
   {% for member in members %}
-  <tr>
-    <td>{{ member }}</td><td><button name="remove" value="{{ member }}" class="remove-button remove-button-margin-left">Remove {{ member }}</button></td>
-  </tr>
+  <div class="acl-panel-row member-row">
+    <span class="member-id">{{ member }}</span>
+    <button name="remove" value="{{ member }}" class="acl-danger-button" aria-label="Remove {{ member }} from {{ name }}">Remove</button>
+  </div>
   {% endfor %}
-</table>
+  </div>
+{% else %}
+  <p class="acl-empty">No members yet.</p>
 {% endif %}
 </form>
 {% if not is_deleted %}
+<section class="acl-section">
 <h2>Add a member</h2>
 
-<form action="{{ request.path }}" method="post" class="core">
+<form action="{{ request.path }}" method="post" class="core acl-form">
   <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
-  <label for="id_add" style="flex-shrink: 0;">User ID</label>
+  <label for="id_add">Search for a user</label>
   {% if valid_actors %}
-    <div class="choices" data-type="select-one" tabindex="0" style="flex-grow: 1;">
-      <select id="id_add" name="add" class="select-choice">
-        <option></option>
-        {% for actor_id, actor_display in valid_actors %}
-          {% if actor_id not in members %}<option value="{{ actor_id }}">{{ actor_display }}</option>{% endif %}
-        {% endfor %}
-      </select>
-    </div>
+    <select id="id_add" name="add" class="select-choice">
+      <option></option>
+      {% for actor_id, actor_display in valid_actors %}
+        {% if actor_id not in members %}<option value="{{ actor_id }}">{{ actor_display }}</option>{% endif %}
+      {% endfor %}
+    </select>
   {% else %}
-    <input data-1p-ignore placeholder="User ID" style="flex-grow: 1;" id="id_add" name="add">
+    <input data-1p-ignore placeholder="User ID" id="id_add" name="add">
+    <button type="submit">Add</button>
   {% endif %}
 </form>
+</section>
 {% endif %}
 {% endif %}
 
 {% if audit_log %}
+<section class="acl-section">
 <h2>Audit history</h2>
+<div class="audit-wrap">
 <table class="audit">
   <thead>
     <tr>
@@ -118,21 +191,24 @@ table.audit td {
     {% for entry in audit_log %}
       <tr>
         <td>{{ entry.timestamp }}</td>
-        <td>{{ entry.operation_by or '*dynamic*' }}</td>
-        <td>{{ entry.operation }}</td>
-        <td>{{ entry.actor_id or '' }}</td>
+        <td class="audit-actor">{{ entry.operation_by or '*dynamic*' }}</td>
+        <td><span class="audit-operation operation-{{ entry.operation }}">{{ entry.operation }}</span></td>
+        <td class="audit-user">{{ entry.actor_id or '' }}</td>
       </tr>
     {% endfor %}
   </tbody>
 </table>
+</div>
+</section>
 {% endif %}
 
 {% if not is_deleted and not dynamic_config %}
-  <form action="{{ request.path }}" method="post" style="margin-top: 1em">
+  <form action="{{ request.path }}" method="post" class="acl-danger-zone">
     <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
-    <p><button name="delete_group" value="1" class="remove-button">Delete this group</button></p>
+    <p><button name="delete_group" value="1" class="acl-danger-button delete-button">Delete this group</button></p>
   </form>
 {% endif %}
+</div>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {

@@ -2,29 +2,229 @@
 
 {% block title %}Groups{% endblock %}
 
+{% block extra_head %}
+<style>
+.acl-groups-page {
+  --acl-border: #d8dee8;
+  --acl-border-soft: #edf0f4;
+  --acl-text: #17213d;
+  --acl-muted: #5b6475;
+  --acl-surface: #fff;
+  --acl-surface-soft: #f6f8fb;
+  max-width: 880px;
+  color: var(--acl-text);
+}
+.acl-groups-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin: 1.6rem 0 1.25rem;
+}
+.acl-groups-header h1 {
+  margin: 0;
+  font-size: 2.35rem;
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+.group-count,
+.member-count,
+.dynamic-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.65rem;
+  padding: 0 0.6rem;
+  border: 1px solid var(--acl-border);
+  border-radius: 999px;
+  background: var(--acl-surface-soft);
+  color: var(--acl-muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.dynamic-badge {
+  border-color: #b9d7c4;
+  background: #eef6f1;
+  color: #276749;
+}
+.acl-section {
+  margin-top: 2rem;
+}
+.acl-section h2 {
+  margin: 0 0 0.85rem;
+  font-size: 1.45rem;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+.groups-list {
+  border: 1px solid var(--acl-border);
+  border-radius: 8px;
+  background: var(--acl-surface);
+  overflow: hidden;
+}
+.group-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  border-top: 1px solid var(--acl-border-soft);
+}
+.group-row:first-child {
+  border-top: 0;
+}
+.group-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.group-name {
+  overflow-wrap: anywhere;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+.members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.member-chip {
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.18rem 0.5rem;
+  border: 1px solid var(--acl-border-soft);
+  border-radius: 999px;
+  background: var(--acl-surface-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+.empty-state,
+.dynamic-rule {
+  margin: 0.6rem 0 0;
+  color: var(--acl-muted);
+}
+.dynamic-rule code {
+  color: var(--acl-text);
+}
+.view-link {
+  align-self: center;
+  padding: 0.38rem 0.65rem;
+  border: 1px solid #2f6f95;
+  border-radius: 6px;
+  background: #fff;
+  color: #255d80;
+  font-weight: 700;
+  text-decoration: none;
+}
+.view-link:hover {
+  background: #edf4fb;
+  border-color: #255d80;
+}
+.create-group-form {
+  display: flex;
+  align-items: end;
+  gap: 0.7rem;
+  max-width: 34rem;
+  flex-wrap: wrap;
+}
+.create-group-form label {
+  margin-bottom: 0.38rem;
+  font-weight: 700;
+}
+.create-group-form input {
+  flex: 1 1 16rem;
+  min-width: 14rem;
+  min-height: 2.35rem;
+  box-sizing: border-box;
+}
+.create-group-form button {
+  min-height: 2.35rem;
+  padding: 0 0.8rem;
+  border: 1px solid #2f6f95;
+  border-radius: 6px;
+  background: #2f6f95;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+.create-group-form button:hover {
+  background: #255d80;
+  border-color: #255d80;
+}
+@media (max-width: 640px) {
+  .acl-groups-header {
+    display: block;
+  }
+  .acl-groups-header h1 {
+    margin-bottom: 0.45rem;
+    font-size: 2rem;
+  }
+  .group-row {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+  .view-link {
+    justify-self: start;
+  }
+}
+</style>
+{% endblock %}
+
 {% block content %}
-<h1>Groups</h1>
+<div class="acl-groups-page">
+<div class="acl-groups-header">
+  <h1>Groups</h1>
+  <span class="group-count">{{ groups|length }} group{% if groups|length != 1 %}s{% endif %}</span>
+</div>
 
-{% for group in groups %}
-<h3>
-  <a href="{{ urls.path("/-/acl/groups/" + group.name)}}">{{ group.name }}</a>
-  ({{ group.size }})
-  {% if dynamic_groups.get(group.name) %} <strong>dynamic</strong>{% endif %}
-</h3>
-<p>{{ ', '.join(group.actor_ids) }}</p>
-{% if not group.actor_ids and not dynamic_groups.get(group.name) %}
-  <p><em>No members</em></p>
-{% endif %}
-{% if dynamic_groups.get(group.name) %}
-  <p>Users matching: <code>{{ dynamic_groups[group.name]|tojson }}</code></p>
-{% endif %}
-{% endfor %}
+{% if groups %}
+<section class="groups-list" aria-label="Groups">
+  {% for group in groups %}
+  <article class="group-row">
+    <div>
+      <div class="group-title-row">
+        <a class="group-name" href="{{ urls.path("/-/acl/groups/" + group.name)}}">{{ group.name }}</a>
+        <span class="member-count">{{ group.size }} member{% if group.size != 1 %}s{% endif %}</span>
+        {% if dynamic_groups.get(group.name) %}<span class="dynamic-badge">dynamic</span>{% endif %}
+      </div>
 
+      {% if group.actor_ids %}
+      <ul class="members" aria-label="Members in {{ group.name }}">
+        {% for actor_id in group.actor_ids %}
+        <li class="member-chip" title="{{ actor_id }}">{{ actor_id }}</li>
+        {% endfor %}
+      </ul>
+      {% elif not dynamic_groups.get(group.name) %}
+      <p class="empty-state">No members</p>
+      {% endif %}
+
+      {% if dynamic_groups.get(group.name) %}
+      <p class="dynamic-rule">Users matching <code>{{ dynamic_groups[group.name]|tojson }}</code></p>
+      {% endif %}
+    </div>
+    <a class="view-link" href="{{ urls.path("/-/acl/groups/" + group.name)}}">Manage</a>
+  </article>
+  {% endfor %}
+</section>
+{% else %}
+<p class="empty-state">No groups yet.</p>
+{% endif %}
+
+<section class="acl-section">
 <h2>Create a group</h2>
 
-<form action="{{ request.path }}" method="post">
+<form action="{{ request.path }}" method="post" class="create-group-form">
   <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
-  <p><label>Group name <input type="text" name="new_group"></label> <input type="submit" value="Create group"></p>
+  <label for="id_new_group">Group name</label>
+  <input type="text" name="new_group" id="id_new_group">
+  <button type="submit">Create group</button>
 </form>
+</section>
+</div>
 
 {% endblock %}

@@ -28,7 +28,7 @@ turns into daily-planet / gotham-gazette groups for group-grant demos.
 from datasette import hookimpl, Forbidden, Response
 from datasette.permissions import Action, Resource
 
-from datasette_acl.grants import grant
+from datasette_acl.grants import grant, Principal
 from datasette_acl.roles import role_for_actions, roles_for, standard_roles
 
 # datasette-debug-gotham's demo actors (Clark Kent, Bruce Wayne, …). Imported
@@ -201,7 +201,7 @@ async def widgets_index(request, datasette):
             "widget",
             WIDGETS_PARENT,
             str(widget_id),
-            actor_id=actor_id,
+            principal=Principal.actor(actor_id),
             role="Manager",
             by_actor=actor_id,
         )

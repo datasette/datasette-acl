@@ -18,7 +18,7 @@ from datasette import Response
 from datasette.app import Datasette
 from datasette.permissions import Action, Resource
 from datasette.plugins import pm
-from datasette_acl.grants import grant
+from datasette_acl.grants import grant, Principal
 from datasette_acl.roles import AclRole
 import pytest
 import pytest_asyncio
@@ -369,7 +369,11 @@ async def resource_ds():
         await db.execute_write("INSERT INTO acl_groups (name) VALUES ('staff')")
         # bruce is a per-resource Manager (no global admin).
         await grant(
-            datasette, "mock-doc", "42", actor_id="bruce", role="Manager",
+            datasette,
+            "mock-doc",
+            "42",
+            principal=Principal.actor("bruce"),
+            role="Manager",
             by_actor="root",
         )
         yield datasette

@@ -15,7 +15,7 @@ from datasette import hookimpl
 from datasette.app import Datasette
 from datasette.permissions import Action, Resource
 from datasette.plugins import pm
-from datasette_acl.grants import grant, list_grants
+from datasette_acl.grants import grant, list_grants, Principal
 from datasette_acl.roles import AclRole
 import pytest
 import pytest_asyncio
@@ -284,7 +284,14 @@ async def test_grant_invalid_principal_type_is_400(api_ds):
 
 @pytest.mark.asyncio
 async def test_update_swaps_role(api_ds):
-    await grant(api_ds, "mock-doc", "42", actor_id="bob", role="Manager", by_actor="root")
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("bob"),
+        role="Manager",
+        by_actor="root",
+    )
     response = await _post(
         api_ds,
         UPDATE_URL,
@@ -309,7 +316,14 @@ async def test_update_swaps_role(api_ds):
 
 @pytest.mark.asyncio
 async def test_revoke_removes_all(api_ds):
-    await grant(api_ds, "mock-doc", "42", actor_id="bob", role="Manager", by_actor="root")
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("bob"),
+        role="Manager",
+        by_actor="root",
+    )
     response = await _post(
         api_ds,
         REVOKE_URL,
@@ -333,7 +347,14 @@ async def test_revoke_removes_all(api_ds):
 @pytest.mark.asyncio
 async def test_revoke_group(api_ds):
     gid = await _group_id(api_ds, "staff")
-    await grant(api_ds, "mock-doc", "42", group_id=gid, role="Viewer", by_actor="root")
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.group(gid),
+        role="Viewer",
+        by_actor="root",
+    )
     response = await _post(
         api_ds,
         REVOKE_URL,
@@ -372,7 +393,14 @@ async def test_anonymous_cannot_grant(api_ds):
 async def test_manager_role_grants_manage_ability(api_ds):
     # Granting mallory the Manager role (which includes doc-manage) lets her
     # re-share, without the global datasette-acl permission.
-    await grant(api_ds, "mock-doc", "42", actor_id="mallory", role="Manager", by_actor="root")
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("mallory"),
+        role="Manager",
+        by_actor="root",
+    )
     response = await _post(
         api_ds,
         GRANT_URL,
@@ -387,7 +415,14 @@ async def test_manager_role_grants_manage_ability(api_ds):
 @pytest.mark.asyncio
 async def test_non_manager_role_cannot_grant(api_ds):
     # Editor is not a manage role, so it must NOT confer re-share ability.
-    await grant(api_ds, "mock-doc", "42", actor_id="mallory", role="Editor", by_actor="root")
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("mallory"),
+        role="Editor",
+        by_actor="root",
+    )
     response = await _post(
         api_ds,
         GRANT_URL,
@@ -406,7 +441,14 @@ async def test_group_manager_role_grants_manage_ability(api_ds):
         "INSERT INTO acl_actor_groups (actor_id, group_id) VALUES (?, ?)",
         ["mallory", gid],
     )
-    await grant(api_ds, "mock-doc", "42", group_id=gid, role="Manager", by_actor="root")
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.group(gid),
+        role="Manager",
+        by_actor="root",
+    )
     response = await _post(
         api_ds,
         GRANT_URL,
@@ -544,7 +586,12 @@ HTML_PAGE_URL = "/-/acl/resource/mock-doc/42"
 async def test_html_page_manager_can_view(api_ds):
     # mallory holds the Manager role on mock-doc/42 but is NOT the global admin.
     await grant(
-        api_ds, "mock-doc", "42", actor_id="mallory", role="Manager", by_actor="root"
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("mallory"),
+        role="Manager",
+        by_actor="root",
     )
     response = await api_ds.client.get(HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory"))
     assert response.status_code == 200
@@ -555,7 +602,12 @@ async def test_html_page_manager_can_grant_via_post(api_ds):
     # A per-resource Manager can grant a raw action through the HTML form,
     # without the global datasette-acl permission.
     await grant(
-        api_ds, "mock-doc", "42", actor_id="mallory", role="Manager", by_actor="root"
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("mallory"),
+        role="Manager",
+        by_actor="root",
     )
     response = await api_ds.client.post(
         HTML_PAGE_URL,
@@ -578,7 +630,12 @@ async def test_html_page_group_manager_can_view(api_ds):
         ["mallory", gid],
     )
     await grant(
-        api_ds, "mock-doc", "42", group_id=gid, role="Manager", by_actor="root"
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.group(gid),
+        role="Manager",
+        by_actor="root",
     )
     response = await api_ds.client.get(HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory"))
     assert response.status_code == 200
@@ -595,7 +652,12 @@ async def test_html_page_non_manager_forbidden(api_ds):
 async def test_html_page_non_manage_role_forbidden(api_ds):
     # Editor is not a manage role, so it must NOT unlock the admin page.
     await grant(
-        api_ds, "mock-doc", "42", actor_id="mallory", role="Editor", by_actor="root"
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("mallory"),
+        role="Editor",
+        by_actor="root",
     )
     response = await api_ds.client.get(HTML_PAGE_URL, cookies=_cookie(api_ds, "mallory"))
     assert response.status_code == 403
@@ -635,7 +697,12 @@ async def test_grant_helper_rejects_unknown_raw_action(api_ds):
     # register, rather than silently inventing it.
     with pytest.raises(ValueError):
         await grant(
-            api_ds, "mock-doc", "42", actor_id="bob", actions=["not-real"], by_actor="root"
+            api_ds,
+            "mock-doc",
+            "42",
+            principal=Principal.actor("bob"),
+            actions=["not-real"],
+            by_actor="root",
         )
     # And nothing must have been persisted.
     assert "not-real" not in await _acl_action_names(api_ds)
@@ -664,7 +731,7 @@ async def test_grant_unknown_action_partial_list_is_atomic(api_ds):
             api_ds,
             "mock-doc",
             "42",
-            actor_id="bob",
+            principal=Principal.actor("bob"),
             actions=["doc-view", "not-real"],
             by_actor="root",
         )
@@ -678,7 +745,12 @@ async def test_future_action_name_not_persisted_as_stale_grant(api_ds):
     # mock-doc today, but which a future version might add. It must be rejected,
     # and must never reach acl_actions, so it cannot go live later.
     await grant(
-        api_ds, "mock-doc", "42", actor_id="mallory", role="Manager", by_actor="root"
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("mallory"),
+        role="Manager",
+        by_actor="root",
     )
     response = await _post(
         api_ds,

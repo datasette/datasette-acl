@@ -13,7 +13,7 @@ from datasette import hookimpl
 from datasette.app import Datasette
 from datasette.permissions import Action, Resource
 from datasette.plugins import pm
-from datasette_acl.grants import grant
+from datasette_acl.grants import grant, Principal
 from datasette_acl.roles import AclRole
 import pytest
 import pytest_asyncio
@@ -166,7 +166,14 @@ async def test_read_nonexistent_resource_forbidden(api_ds):
 async def test_per_resource_manager_can_read(api_ds):
     # Grant alice the Manager role (which includes the manage action) and prove
     # she can read the endpoint without the global datasette-acl permission.
-    await grant(api_ds, "mock-doc", "42", actor_id="alice", role="Manager", by_actor="root")
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Manager",
+        by_actor="root",
+    )
     cookies = {"ds_actor": api_ds.client.actor_cookie({"id": "alice"})}
     response = await _get(api_ds, "/-/acl/api/resource/mock-doc/42", cookies=cookies)
     assert response.status_code == 200
@@ -179,16 +186,35 @@ async def test_per_resource_manager_can_read(api_ds):
 @pytest.mark.asyncio
 async def test_read_full_shape(api_ds):
     gid = await _group_id(api_ds, "staff")
-    await grant(api_ds, "mock-doc", "42", actor_id="alice", role="Manager", by_actor="root")
-    await grant(
-        api_ds, "mock-doc", "42", actor_id="agent:researcher", role="Editor", by_actor="root"
-    )
-    await grant(api_ds, "mock-doc", "42", group_id=gid, role="Viewer", by_actor="root")
     await grant(
         api_ds,
         "mock-doc",
         "42",
-        principal_type="authenticated",
+        principal=Principal.actor("alice"),
+        role="Manager",
+        by_actor="root",
+    )
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("agent:researcher"),
+        role="Editor",
+        by_actor="root",
+    )
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.group(gid),
+        role="Viewer",
+        by_actor="root",
+    )
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.public("authenticated"),
         role="Viewer",
         by_actor="root",
     )
@@ -250,7 +276,14 @@ async def test_group_member_count(api_ds):
             "INSERT INTO acl_actor_groups (actor_id, group_id) VALUES (?, ?)",
             [actor_id, gid],
         )
-    await grant(api_ds, "mock-doc", "42", group_id=gid, role="Viewer", by_actor="root")
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.group(gid),
+        role="Viewer",
+        by_actor="root",
+    )
     response = await _get(
         api_ds, "/-/acl/api/resource/mock-doc/42", cookies=_root_cookie(api_ds)
     )
@@ -275,7 +308,14 @@ async def test_read_empty_resource(api_ds):
 @pytest.mark.asyncio
 async def test_unknown_actor_falls_back(api_ds):
     # An actor with no directory entry still resolves (kind user, no names).
-    await grant(api_ds, "mock-doc", "42", actor_id="ghost", role="Viewer", by_actor="root")
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("ghost"),
+        role="Viewer",
+        by_actor="root",
+    )
     response = await _get(
         api_ds, "/-/acl/api/resource/mock-doc/42", cookies=_root_cookie(api_ds)
     )

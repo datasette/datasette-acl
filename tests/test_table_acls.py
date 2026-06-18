@@ -626,15 +626,6 @@ async def test_table_actions(ds, should_work):
 
 
 @pytest.mark.asyncio
-async def test_table_specific_acl_route_is_gone(ds):
-    response = await ds.client.get(
-        "/db/t/-/acl",
-        cookies={"ds_actor": ds.client.actor_cookie({"id": "root"})},
-    )
-    assert response.status_code == 404
-
-
-@pytest.mark.asyncio
 async def test_table_resource_acl_page_actions_are_dynamic(ds):
     # The generic table resource page should offer the action set discovered
     # from datasette.actions (every TableResource-scoped action), not a

@@ -5,6 +5,8 @@ role / by raw actions, revoke, atomic update_role, audit rows, the actor/group
 CHECK invariant, and building a core Resource for 2-level and parent-only types.
 """
 
+import asyncio
+
 from datasette import hookimpl
 from datasette.app import Datasette
 from datasette.permissions import Action, Resource
@@ -807,3 +809,40 @@ async def test_guard_inert_for_resource_type_without_manage_role(grants_ds):
         by_actor="root",
     )
     assert await list_grants(grants_ds, "file", "home", "notes.txt") == []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_revokes_keep_a_manager(grants_ds):
+    # Two managers, revoked concurrently. The guard's manager count and the
+    # delete run in one write-thread transaction, so the two revokes are
+    # serialized: the first succeeds, the second sees itself as the sole
+    # remaining manager and is refused. A resource can never be left with zero
+    # managers, even under a race. (A non-transactional guard -- reading the
+    # manager count on the read pool before writing -- could let both pass.)
+    for actor_id in ("alice", "bob"):
+        await grant(
+            grants_ds,
+            "doc",
+            "42",
+            principal=Principal.actor(actor_id),
+            role="Manager",
+            by_actor="root",
+        )
+    results = await asyncio.gather(
+        revoke(
+            grants_ds, "doc", "42", principal=Principal.actor("alice"), by_actor="root"
+        ),
+        revoke(
+            grants_ds, "doc", "42", principal=Principal.actor("bob"), by_actor="root"
+        ),
+        return_exceptions=True,
+    )
+    # Exactly one revoke succeeded; the other was refused as the last manager.
+    refused = [r for r in results if isinstance(r, LastManagerError)]
+    succeeded = [r for r in results if not isinstance(r, Exception)]
+    assert len(refused) == 1
+    assert len(succeeded) == 1
+    # ...and a manager remains.
+    grants = await list_grants(grants_ds, "doc", "42")
+    managers = [g for g in grants if "doc-manage" in g["actions"]]
+    assert len(managers) == 1

@@ -304,29 +304,6 @@ async def _insert_grant(
     await _audit(db, "added", resource_id, principal, action_name, by_actor)
 
 
-async def _delete_grant(
-    db: Database,
-    resource_id: int,
-    principal: Principal,
-    action_name: str,
-    by_actor: Optional[str],
-) -> None:
-    await db.execute_write(
-        f"""
-        DELETE FROM acl
-        WHERE {principal.where_sql()}
-          AND resource_id = :resource_id
-          AND action_id = (SELECT id FROM acl_actions WHERE name = :action_name)
-        """,
-        {
-            **principal.sql_params(),
-            "resource_id": resource_id,
-            "action_name": action_name,
-        },
-    )
-    await _audit(db, "removed", resource_id, principal, action_name, by_actor)
-
-
 async def _audit(
     db: Database,
     operation: Literal["added", "removed"],
@@ -404,20 +381,43 @@ def _principal_key(principal: Principal):
     return (principal.principal_type, None)
 
 
-def _grant_key(grant: Grant):
-    """Identity key for a :func:`list_grants` entry; see :func:`_principal_key`."""
-    if grant["principal"] == "actor":
-        return ("actor", grant["actor_id"])
-    if grant["principal"] == "group":
-        return ("group", grant["group_id"])
-    return (grant["principal"], None)
+def _managers_sync(conn, resource_id: int, manage_set: Set[str]) -> Set[tuple]:
+    """Manager identity keys for a resource, read on the write connection.
+
+    A manager is any principal whose granted actions intersect ``manage_set``.
+    Soft-deleted groups are excluded (mirrors :func:`list_grants`). Runs
+    synchronously against ``conn`` so the read participates in the caller's
+    write transaction -- see :func:`_guard_last_manager_sync`.
+    """
+    rows = conn.execute(
+        """
+        SELECT acl.principal_type, acl.actor_id, acl.group_id, acl_actions.name
+        FROM acl
+        JOIN acl_actions ON acl.action_id = acl_actions.id
+        LEFT JOIN acl_groups ON acl.group_id = acl_groups.id
+        WHERE acl.resource_id = :resource_id
+          AND (acl.group_id IS NULL OR acl_groups.deleted IS NULL)
+        """,
+        {"resource_id": resource_id},
+    ).fetchall()
+    managers: Set[tuple] = set()
+    for principal_type, actor_id, group_id, action_name in rows:
+        if action_name not in manage_set:
+            continue
+        if principal_type == "actor":
+            managers.add(("actor", actor_id))
+        elif principal_type == "group":
+            managers.add(("group", group_id))
+        else:
+            managers.add((principal_type, None))
+    return managers
 
 
-async def _guard_last_manager(
+def _guard_last_manager_sync(
+    conn,
     datasette: Datasette,
     resource_type: str,
-    parent: str,
-    child: Optional[str],
+    resource_id: int,
     principal: Principal,
     new_actions: Set[str],
 ) -> None:
@@ -430,13 +430,18 @@ async def _guard_last_manager(
     would share. Raises :class:`LastManagerError` when the target is currently
     the only manager and the mutation drops its manager status. Inert when the
     resource type registers no manage role (``manage_set`` empty).
+
+    Runs synchronously on the write connection (``conn``) so that the manager
+    count and the subsequent writes form one atomic transaction. Doing the
+    check on a separate read pool would race: two concurrent revokes of two
+    distinct managers could each see the other still present, both pass, and
+    together orphan the resource.
     """
     roles = roles_for(datasette, resource_type)
     manage_set = manage_only_actions(roles)
     if not manage_set:
         return
-    grants = await list_grants(datasette, resource_type, parent, child)
-    managers = {_grant_key(g) for g in grants if manage_set & set(g["actions"])}
+    managers = _managers_sync(conn, resource_id, manage_set)
     target_key = _principal_key(principal)
     # Only an orphaning concern if the target is the *current* sole manager and
     # the mutation strips its manager status (revoke, or a downgrade whose new
@@ -449,6 +454,89 @@ async def _guard_last_manager(
         "Cannot remove the last manager: this is the only grant that can "
         "manage sharing for this resource. Add another manager first."
     )
+
+
+def _current_actions_sync(conn, resource_id: int, principal: Principal) -> Set[str]:
+    """Synchronous :func:`_current_actions`, run on the write connection."""
+    rows = conn.execute(
+        f"""
+        SELECT acl_actions.name
+        FROM acl
+        JOIN acl_actions ON acl.action_id = acl_actions.id
+        WHERE acl.resource_id = :resource_id AND {principal.where_sql("acl")}
+        """,
+        {"resource_id": resource_id, **principal.sql_params()},
+    ).fetchall()
+    return {row[0] for row in rows}
+
+
+def _audit_sync(conn, operation, resource_id, principal, action_name, by_actor):
+    """Synchronous :func:`_audit`, run on the write connection."""
+    conn.execute(
+        """
+        INSERT INTO acl_audit (
+            operation, principal_type, actor_id, group_id, resource_id,
+            action_id, operation_by
+        ) VALUES (
+            :operation,
+            :principal_type,
+            :actor_id,
+            :group_id,
+            :resource_id,
+            (SELECT id FROM acl_actions WHERE name = :action_name),
+            :operation_by
+        )
+        """,
+        {
+            "operation": operation,
+            **principal.sql_params(),
+            "resource_id": resource_id,
+            "action_name": action_name,
+            "operation_by": by_actor,
+        },
+    )
+
+
+def _delete_grant_sync(conn, resource_id, principal, action_name, by_actor):
+    """Synchronous :func:`_delete_grant`, run on the write connection."""
+    conn.execute(
+        f"""
+        DELETE FROM acl
+        WHERE {principal.where_sql()}
+          AND resource_id = :resource_id
+          AND action_id = (SELECT id FROM acl_actions WHERE name = :action_name)
+        """,
+        {
+            **principal.sql_params(),
+            "resource_id": resource_id,
+            "action_name": action_name,
+        },
+    )
+    _audit_sync(conn, "removed", resource_id, principal, action_name, by_actor)
+
+
+def _insert_grant_sync(conn, resource_id, principal, action_name, by_actor):
+    """Synchronous :func:`_insert_grant`, run on the write connection."""
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO acl (
+            principal_type, actor_id, group_id, resource_id, action_id
+        )
+        VALUES (
+            :principal_type,
+            :actor_id,
+            :group_id,
+            :resource_id,
+            (SELECT id FROM acl_actions WHERE name = :action_name)
+        )
+        """,
+        {
+            **principal.sql_params(),
+            "resource_id": resource_id,
+            "action_name": action_name,
+        },
+    )
+    _audit_sync(conn, "added", resource_id, principal, action_name, by_actor)
 
 
 async def revoke(
@@ -465,14 +553,24 @@ async def revoke(
     The principal is specified as in :func:`grant`. Returns the list of action
     names that were removed. Raises :class:`LastManagerError` (and writes
     nothing) when the principal is the resource's last manager.
+
+    The last-manager check and the deletes run in one transaction on the write
+    connection, so the check cannot race a concurrent mutation (see
+    :func:`_guard_last_manager_sync`).
     """
     db = datasette.get_internal_database()
     resource_id = await _ensure_resource_id(db, resource_type, parent, child)
-    await _guard_last_manager(datasette, resource_type, parent, child, principal, set())
-    existing = await _current_actions(db, resource_id, principal)
-    for action_name in sorted(existing):
-        await _delete_grant(db, resource_id, principal, action_name, by_actor)
-    return sorted(existing)
+
+    def fn(conn):
+        _guard_last_manager_sync(
+            conn, datasette, resource_type, resource_id, principal, set()
+        )
+        existing = _current_actions_sync(conn, resource_id, principal)
+        for action_name in sorted(existing):
+            _delete_grant_sync(conn, resource_id, principal, action_name, by_actor)
+        return sorted(existing)
+
+    return await db.execute_write_fn(fn, transaction=True)
 
 
 async def update_role(
@@ -492,20 +590,28 @@ async def update_role(
     Audits each change. Returns the new action list. Raises
     :class:`LastManagerError` (and writes nothing) when the swap would downgrade
     the resource's last manager out of its manager role.
+
+    The last-manager check and the action swap run in one transaction on the
+    write connection, so the check cannot race a concurrent mutation (see
+    :func:`_guard_last_manager_sync`).
     """
     resolved = set(_resolve_actions(datasette, resource_type, role, None))
     db = datasette.get_internal_database()
     resource_id = await _ensure_resource_id(db, resource_type, parent, child)
-    await _guard_last_manager(
-        datasette, resource_type, parent, child, principal, resolved
-    )
     await _ensure_actions(db, resolved)
-    existing = await _current_actions(db, resource_id, principal)
-    for action_name in sorted(existing - resolved):
-        await _delete_grant(db, resource_id, principal, action_name, by_actor)
-    for action_name in sorted(resolved - existing):
-        await _insert_grant(db, resource_id, principal, action_name, by_actor)
-    return sorted(resolved)
+
+    def fn(conn):
+        _guard_last_manager_sync(
+            conn, datasette, resource_type, resource_id, principal, resolved
+        )
+        existing = _current_actions_sync(conn, resource_id, principal)
+        for action_name in sorted(existing - resolved):
+            _delete_grant_sync(conn, resource_id, principal, action_name, by_actor)
+        for action_name in sorted(resolved - existing):
+            _insert_grant_sync(conn, resource_id, principal, action_name, by_actor)
+        return sorted(resolved)
+
+    return await db.execute_write_fn(fn, transaction=True)
 
 
 async def list_grants(

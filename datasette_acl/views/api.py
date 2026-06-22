@@ -49,6 +49,7 @@ from datasette_acl.grants import (
     revoke,
     update_role,
     list_grants,
+    LastManagerError,
     Principal,
 )
 from datasette_acl.roles import role_for_actions, roles_for
@@ -563,6 +564,8 @@ async def revoke_json(request, datasette):
             principal=principal,
             by_actor=by_actor,
         )
+    except LastManagerError as exc:
+        return _error_response(_ApiError(409, str(exc)))
     except _ApiError as exc:
         return _error_response(exc)
     except ValueError as exc:
@@ -596,6 +599,8 @@ async def update_json(request, datasette):
             role=role,
             by_actor=by_actor,
         )
+    except LastManagerError as exc:
+        return _error_response(_ApiError(409, str(exc)))
     except _ApiError as exc:
         return _error_response(exc)
     except ValueError as exc:

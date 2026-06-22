@@ -288,6 +288,16 @@ async def test_update_swaps_role(api_ds):
         role="Manager",
         by_actor="root",
     )
+    # A co-manager keeps the last-manager guard from tripping; this test covers
+    # the role swap itself, not the guard.
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("carol"),
+        role="Manager",
+        by_actor="root",
+    )
     response = await _post(
         api_ds,
         UPDATE_URL,
@@ -319,6 +329,16 @@ async def test_revoke_removes_all(api_ds):
         "mock-doc",
         "42",
         principal=Principal.actor("bob"),
+        role="Manager",
+        by_actor="root",
+    )
+    # A co-manager keeps the last-manager guard from tripping; this test covers
+    # revoke removing every row for its target, not the guard.
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("carol"),
         role="Manager",
         by_actor="root",
     )
@@ -770,3 +790,154 @@ async def test_future_action_name_not_persisted_as_stale_grant(api_ds):
     )
     assert response.status_code == 400
     assert "doc-superpower" not in await _acl_action_names(api_ds)
+
+
+# --- last-manager orphan guard (409) --------------------------------------
+#
+# The JSON API refuses to revoke or downgrade the last manage-capable grant on a
+# resource -- otherwise the resource is orphaned (the manager-only read endpoint
+# means nobody could re-open the share dialog to fix it). The guard lives in
+# grants.py (so every caller is protected) and the views surface it as a 409.
+
+
+@pytest.mark.asyncio
+async def test_api_revoke_last_manager_is_409(api_ds):
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Manager",
+        by_actor="root",
+    )
+    response = await _post(
+        api_ds,
+        REVOKE_URL,
+        json={"actor_id": "alice"},
+        cookies=_root_cookie(api_ds),
+    )
+    assert response.status_code == 409
+    assert response.json()["ok"] is False
+    # The grant is unchanged.
+    grants = await list_grants(api_ds, "mock-doc", "42")
+    alice = [g for g in grants if g["actor_id"] == "alice"][0]
+    assert alice["actions"] == ["doc-edit", "doc-manage", "doc-view"]
+
+
+@pytest.mark.asyncio
+async def test_api_revoke_manager_with_other_manager_ok(api_ds):
+    for actor_id in ("alice", "bob"):
+        await grant(
+            api_ds,
+            "mock-doc",
+            "42",
+            principal=Principal.actor(actor_id),
+            role="Manager",
+            by_actor="root",
+        )
+    response = await _post(
+        api_ds,
+        REVOKE_URL,
+        json={"actor_id": "alice"},
+        cookies=_root_cookie(api_ds),
+    )
+    assert response.status_code == 200
+    grants = await list_grants(api_ds, "mock-doc", "42")
+    assert [g for g in grants if g["actor_id"] == "alice"] == []
+
+
+@pytest.mark.asyncio
+async def test_api_revoke_manager_with_managing_group_ok(api_ds):
+    gid = await _group_id(api_ds, "staff")
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Manager",
+        by_actor="root",
+    )
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.group(gid),
+        role="Manager",
+        by_actor="root",
+    )
+    response = await _post(
+        api_ds,
+        REVOKE_URL,
+        json={"actor_id": "alice"},
+        cookies=_root_cookie(api_ds),
+    )
+    assert response.status_code == 200
+    grants = await list_grants(api_ds, "mock-doc", "42")
+    assert [g for g in grants if g["actor_id"] == "alice"] == []
+
+
+@pytest.mark.asyncio
+async def test_api_downgrade_last_manager_is_409(api_ds):
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Manager",
+        by_actor="root",
+    )
+    response = await _post(
+        api_ds,
+        UPDATE_URL,
+        json={"actor_id": "alice", "role": "Viewer"},
+        cookies=_root_cookie(api_ds),
+    )
+    assert response.status_code == 409
+    assert response.json()["ok"] is False
+    # Still a full Manager.
+    grants = await list_grants(api_ds, "mock-doc", "42")
+    alice = [g for g in grants if g["actor_id"] == "alice"][0]
+    assert alice["actions"] == ["doc-edit", "doc-manage", "doc-view"]
+
+
+@pytest.mark.asyncio
+async def test_api_downgrade_manager_with_other_manager_ok(api_ds):
+    for actor_id in ("alice", "bob"):
+        await grant(
+            api_ds,
+            "mock-doc",
+            "42",
+            principal=Principal.actor(actor_id),
+            role="Manager",
+            by_actor="root",
+        )
+    response = await _post(
+        api_ds,
+        UPDATE_URL,
+        json={"actor_id": "alice", "role": "Viewer"},
+        cookies=_root_cookie(api_ds),
+    )
+    assert response.status_code == 200
+    grants = await list_grants(api_ds, "mock-doc", "42")
+    alice = [g for g in grants if g["actor_id"] == "alice"][0]
+    assert alice["actions"] == ["doc-view"]
+
+
+@pytest.mark.asyncio
+async def test_api_revoke_non_manager_ok(api_ds):
+    # A lone Viewer is not a manager, so revoking it is allowed.
+    await grant(
+        api_ds,
+        "mock-doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Viewer",
+        by_actor="root",
+    )
+    response = await _post(
+        api_ds,
+        REVOKE_URL,
+        json={"actor_id": "alice"},
+        cookies=_root_cookie(api_ds),
+    )
+    assert response.status_code == 200

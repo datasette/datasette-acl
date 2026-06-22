@@ -32,7 +32,7 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from datasette_acl.roles import actions_for_role, roles_for
+from datasette_acl.roles import actions_for_role, manage_only_actions, roles_for
 from datasette_acl.utils import PUBLIC_PRINCIPAL_TYPES, actions_for_resource_type
 
 if TYPE_CHECKING:
@@ -41,6 +41,18 @@ if TYPE_CHECKING:
 
 
 PrincipalType = Literal["actor", "group", "everyone", "authenticated", "anonymous"]
+
+
+class LastManagerError(Exception):
+    """A mutation would remove the last manage-capable grant on a resource.
+
+    Revoking or downgrading the only principal that can manage sharing orphans
+    the resource: nobody could re-open the share dialog (the read endpoint is
+    manager-only) to fix it. :func:`revoke` / :func:`update_role` raise this
+    instead of carrying out such a mutation, and the JSON API surfaces it as a
+    409 Conflict. Deliberately NOT a ``ValueError`` so callers can distinguish a
+    refused-but-valid request from malformed input.
+    """
 
 
 @dataclass(frozen=True)
@@ -378,6 +390,67 @@ async def grant(
     return sorted(existing | set(resolved))
 
 
+def _principal_key(principal: Principal):
+    """Identity key for a principal, distinguishing a like-named actor/group.
+
+    An actor and a group that happen to share a name/id are distinct managers,
+    so the key is keyed on ``(principal_type, id)``. Public audiences have no
+    id and are keyed by type alone.
+    """
+    if principal.principal_type == "actor":
+        return ("actor", principal.actor_id)
+    if principal.principal_type == "group":
+        return ("group", principal.group_id)
+    return (principal.principal_type, None)
+
+
+def _grant_key(grant: Grant):
+    """Identity key for a :func:`list_grants` entry; see :func:`_principal_key`."""
+    if grant["principal"] == "actor":
+        return ("actor", grant["actor_id"])
+    if grant["principal"] == "group":
+        return ("group", grant["group_id"])
+    return (grant["principal"], None)
+
+
+async def _guard_last_manager(
+    datasette: Datasette,
+    resource_type: str,
+    parent: str,
+    child: Optional[str],
+    principal: Principal,
+    new_actions: Set[str],
+) -> None:
+    """Refuse a mutation that would leave the resource with no manager.
+
+    ``new_actions`` is the action set the principal will hold *after* the
+    mutation (empty for a revoke). A principal is a manager iff its actions
+    intersect :func:`manage_only_actions` (the action(s) exclusive to a
+    ``manage=True`` role) -- NOT the full manage bundle, which a Viewer/Editor
+    would share. Raises :class:`LastManagerError` when the target is currently
+    the only manager and the mutation drops its manager status. Inert when the
+    resource type registers no manage role (``manage_set`` empty).
+    """
+    roles = roles_for(datasette, resource_type)
+    manage_set = manage_only_actions(roles)
+    if not manage_set:
+        return
+    grants = await list_grants(datasette, resource_type, parent, child)
+    managers = {_grant_key(g) for g in grants if manage_set & set(g["actions"])}
+    target_key = _principal_key(principal)
+    # Only an orphaning concern if the target is the *current* sole manager and
+    # the mutation strips its manager status (revoke, or a downgrade whose new
+    # actions no longer intersect manage_set).
+    if managers != {target_key}:
+        return
+    if manage_set & set(new_actions):
+        return
+    raise LastManagerError(
+        "Cannot remove the last manager: this is the only grant that can "
+        "manage sharing for this resource. Add another manager first."
+    )
+
+
 async def revoke(
     datasette: Datasette,
     resource_type: str,
@@ -390,10 +463,12 @@ async def revoke(
     """Remove all acl rows for a principal on a resource. Audits each removal.
 
     The principal is specified as in :func:`grant`. Returns the list of action
-    names that were removed.
+    names that were removed. Raises :class:`LastManagerError` (and writes
+    nothing) when the principal is the resource's last manager.
     """
     db = datasette.get_internal_database()
     resource_id = await _ensure_resource_id(db, resource_type, parent, child)
+    await _guard_last_manager(datasette, resource_type, parent, child, principal, set())
     existing = await _current_actions(db, resource_id, principal)
     for action_name in sorted(existing):
         await _delete_grant(db, resource_id, principal, action_name, by_actor)
@@ -414,11 +489,16 @@ async def update_role(
 
     The principal is specified as in :func:`grant`. Removes any currently-
     granted actions that are not in the new role, then adds any missing ones.
-    Audits each change. Returns the new action list.
+    Audits each change. Returns the new action list. Raises
+    :class:`LastManagerError` (and writes nothing) when the swap would downgrade
+    the resource's last manager out of its manager role.
     """
     resolved = set(_resolve_actions(datasette, resource_type, role, None))
     db = datasette.get_internal_database()
     resource_id = await _ensure_resource_id(db, resource_type, parent, child)
+    await _guard_last_manager(
+        datasette, resource_type, parent, child, principal, resolved
+    )
     await _ensure_actions(db, resolved)
     existing = await _current_actions(db, resource_id, principal)
     for action_name in sorted(existing - resolved):

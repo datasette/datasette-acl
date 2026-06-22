@@ -14,6 +14,7 @@ from datasette_acl.grants import (
     revoke,
     update_role,
     list_grants,
+    LastManagerError,
     Principal,
     _insert_grant,
 )
@@ -304,6 +305,16 @@ async def test_revoke_removes_all_rows(grants_ds):
         role="Manager",
         by_actor="root",
     )
+    # A co-manager keeps the last-manager guard from tripping; this test is
+    # about revoke removing every row for its target, not the guard.
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("carol"),
+        role="Manager",
+        by_actor="root",
+    )
     removed = await revoke(
         grants_ds,
         "doc",
@@ -354,6 +365,16 @@ async def test_update_role_swaps_atomically(grants_ds):
         "doc",
         "42",
         principal=Principal.actor("alice"),
+        role="Manager",
+        by_actor="root",
+    )
+    # A co-manager keeps the last-manager guard from tripping; this test is
+    # about the atomic action swap, not the guard.
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("carol"),
         role="Manager",
         by_actor="root",
     )
@@ -615,3 +636,174 @@ async def test_insert_grant_dedupes(grants_ds):
         await db.execute("select count(*) from acl where principal_type = 'everyone'")
     ).single_value()
     assert count == 1
+
+
+# --- last-manager orphan guard --------------------------------------------
+#
+# revoke / update_role refuse to remove or downgrade the *last* manage-capable
+# grant on a resource: doing so orphans it (nobody can re-open the share dialog,
+# which is manager-only, to fix it). A "manager" is a principal whose actions
+# intersect manage_only_actions -- i.e. holds doc-manage here. The guard counts
+# distinct managing principals and rejects only when the mutation would drop that
+# count to zero. It writes nothing on rejection.
+
+
+@pytest.mark.asyncio
+async def test_revoke_last_manager_raises_and_writes_nothing(grants_ds):
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Manager",
+        by_actor="root",
+    )
+    with pytest.raises(LastManagerError):
+        await revoke(
+            grants_ds, "doc", "42", principal=Principal.actor("alice"), by_actor="root"
+        )
+    # Grant is untouched...
+    assert await _actions_for(grants_ds, "alice") == [
+        "doc-edit",
+        "doc-manage",
+        "doc-view",
+    ]
+    # ...and no "removed" audit row was written.
+    assert [
+        op for op in await _audit_ops(grants_ds) if op["operation"] == "removed"
+    ] == []
+
+
+@pytest.mark.asyncio
+async def test_revoke_manager_when_another_actor_manager_exists(grants_ds):
+    for actor_id in ("alice", "bob"):
+        await grant(
+            grants_ds,
+            "doc",
+            "42",
+            principal=Principal.actor(actor_id),
+            role="Manager",
+            by_actor="root",
+        )
+    # bob is still a manager, so revoking alice is allowed.
+    await revoke(
+        grants_ds, "doc", "42", principal=Principal.actor("alice"), by_actor="root"
+    )
+    assert await _actions_for(grants_ds, "alice") == []
+
+
+@pytest.mark.asyncio
+async def test_revoke_manager_when_managing_group_exists(grants_ds):
+    gid = await _group_id(grants_ds, "staff")
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Manager",
+        by_actor="root",
+    )
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.group(gid),
+        role="Manager",
+        by_actor="root",
+    )
+    # A managing group counts as a manager, so alice can be revoked.
+    await revoke(
+        grants_ds, "doc", "42", principal=Principal.actor("alice"), by_actor="root"
+    )
+    assert await _actions_for(grants_ds, "alice") == []
+
+
+@pytest.mark.asyncio
+async def test_downgrade_last_manager_raises_and_writes_nothing(grants_ds):
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Manager",
+        by_actor="root",
+    )
+    with pytest.raises(LastManagerError):
+        await update_role(
+            grants_ds,
+            "doc",
+            "42",
+            principal=Principal.actor("alice"),
+            role="Viewer",
+            by_actor="root",
+        )
+    # Unchanged -- still a full Manager.
+    assert await _actions_for(grants_ds, "alice") == [
+        "doc-edit",
+        "doc-manage",
+        "doc-view",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_downgrade_manager_when_another_manager_exists(grants_ds):
+    for actor_id in ("alice", "bob"):
+        await grant(
+            grants_ds,
+            "doc",
+            "42",
+            principal=Principal.actor(actor_id),
+            role="Manager",
+            by_actor="root",
+        )
+    await update_role(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Viewer",
+        by_actor="root",
+    )
+    assert await _actions_for(grants_ds, "alice") == ["doc-view"]
+
+
+@pytest.mark.asyncio
+async def test_revoke_non_manager_is_allowed(grants_ds):
+    # A lone Viewer is not a manager, so revoking it cannot orphan anything.
+    await grant(
+        grants_ds,
+        "doc",
+        "42",
+        principal=Principal.actor("alice"),
+        role="Viewer",
+        by_actor="root",
+    )
+    await revoke(
+        grants_ds, "doc", "42", principal=Principal.actor("alice"), by_actor="root"
+    )
+    assert await _actions_for(grants_ds, "alice") == []
+
+
+@pytest.mark.asyncio
+async def test_guard_inert_for_resource_type_without_manage_role(grants_ds):
+    # The "file" resource type registers an action but no roles, so there is no
+    # manage role and no orphaning concept -- the guard is inert and the only
+    # grant can be revoked.
+    await grant(
+        grants_ds,
+        "file",
+        "home",
+        "notes.txt",
+        principal=Principal.actor("alice"),
+        actions=["file-view"],
+        by_actor="root",
+    )
+    await revoke(
+        grants_ds,
+        "file",
+        "home",
+        "notes.txt",
+        principal=Principal.actor("alice"),
+        by_actor="root",
+    )
+    assert await list_grants(grants_ds, "file", "home", "notes.txt") == []

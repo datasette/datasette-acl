@@ -36,6 +36,8 @@ A resource is addressed by a `(resource_type, parent, child)` triple:
 
 In URLs the child segment is **optional** — every resource route is registered in both a `/{parent}/{child}` and a `/{parent}` form. For a parent-only resource, omit the child segment entirely; in JSON responses the absent child is reported as `"child": null`.
 
+For a **two-level** type, omitting the child addresses the parent-level resource: grants made on it apply to **every child under that parent**. For example `POST /-/acl/api/resource/table/mydb/grant` with `{"actions": ["view-table"]}` lets the principal view all tables in `mydb`, including tables created later. Such a grant exists only if the parent itself exists, and it combines (unions) with any per-child grants.
+
 All three segments are single path components (no slashes). URL-encode values that contain reserved characters.
 
 ### Principals

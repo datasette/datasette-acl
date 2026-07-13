@@ -21,8 +21,13 @@ async def manage_resource_acls(request, datasette):
 
     # The resource type must correspond to a known, action-bearing resource
     # class, otherwise there is nothing to manage.
-    if resource_class_for(datasette, resource_type) is None:
+    resource_class = resource_class_for(datasette, resource_type)
+    if resource_class is None:
         raise Forbidden(f"Unknown resource type: {resource_type}")
+
+    # No child for a child-bearing type names the parent-level resource:
+    # grants made here cascade to every child (e.g. all tables in a database).
+    parent_only = child is None and resource_class.parent_class is not None
 
     # Per-resource authorization: the global datasette-acl admin OR an actor who
     # holds a manage=True role (Manager/Owner) on this specific resource —
@@ -393,6 +398,10 @@ async def manage_resource_acls(request, datasette):
                 "resource_type": resource_type,
                 "parent": parent,
                 "child": child,
+                "parent_only": parent_only,
+                "parent_type": (
+                    resource_class.parent_class.name if parent_only else None
+                ),
                 "actions": actions,
                 "groups": groups,
                 "group_sizes": group_sizes,

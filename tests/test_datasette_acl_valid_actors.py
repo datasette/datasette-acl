@@ -31,11 +31,13 @@ def register_plugin():
 @pytest.mark.asyncio
 async def test_datasette_acl_valid_actors(ds, register_plugin):
     plugins_response = await ds.client.get("/-/plugins.json")
-    assert any(
-        plugin
-        for plugin in plugins_response.json()
-        if plugin["name"] == "TestActorIdsPlugin"
+    plugins_data = plugins_response.json()
+    # datasette 1.0a36 wrapped the response: {"ok": true, "plugins": [...]};
+    # earlier alphas returned the bare list
+    plugins = (
+        plugins_data["plugins"] if isinstance(plugins_data, dict) else plugins_data
     )
+    assert any(plugin["name"] == "TestActorIdsPlugin" for plugin in plugins)
     await ds.get_internal_database().execute_write_script("""
         create table if not exists users (username text primary key);
         insert or ignore into users (username) values ('one');

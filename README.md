@@ -39,6 +39,12 @@ The page also offers a **General access** section for granting table actions to 
 
 An audit log tracks which permissions were added and removed, displayed at the bottom of the permissions page.
 
+### Managing permissions for every table in a database
+
+To grant an action on **every table in a database** — for example letting a group `view-table` everything in `mydb`, including tables created later — use the database-wide page at `/-/acl/resource/table/<database-name>` (the table page URL with the table segment omitted). It can be accessed from the database actions menu on the database page, which also links to the page for the database's own actions such as `view-database`.
+
+Database-wide grants combine with per-table grants: an actor can access a table if either level allows it.
+
 ### Custom resource types
 
 `datasette-acl` is not limited to tables. It can store and resolve grants for *any* resource type defined by a plugin - documents, lists, workbooks, comment spaces, kanban boards and so on.
@@ -70,7 +76,7 @@ A generic admin page for any resource type lives at:
 /-/acl/resource/<resource-type>/<parent>/<child>
 ```
 
-For example `/-/acl/resource/playlist/workspace-1/playlist-42`. The `<child>` segment is optional for parent-only resource types (`/-/acl/resource/<resource-type>/<parent>`). The page presents group, user, general-access grants and an audit log, with checkboxes for exactly the actions registered for that resource type. Access to this admin page is granted to users with the `datasette-acl` permission described below, or users who can manage that specific resource.
+For example `/-/acl/resource/playlist/workspace-1/playlist-42`. The `<child>` segment is optional: for parent-only resource types it names the resource itself (`/-/acl/resource/<resource-type>/<parent>`), while for child-bearing resource types it names the parent-level resource — grants made there apply to **every child under that parent** (e.g. `/-/acl/resource/table/mydb` manages all tables in `mydb`). The page presents group, user, general-access grants and an audit log, with checkboxes for exactly the actions registered for that resource type. Access to this admin page is granted to users with the `datasette-acl` permission described below, or users who can manage that specific resource.
 
 The page also has a **General access** section for exposing a resource without naming individual users — see [Principals and general access](#principals-and-general-access) below.
 

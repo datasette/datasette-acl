@@ -310,6 +310,26 @@ def table_actions(datasette, actor, database, table, request=None):
 
 
 @hookimpl
+def database_actions(datasette, actor, database, request=None):
+    async def inner():
+        if await can_edit_permissions(datasette, actor):
+            return [
+                {
+                    "href": datasette.urls.path(f"/-/acl/resource/database/{database}"),
+                    "label": "Manage database permissions",
+                    "description": "Control who can view this database",
+                },
+                {
+                    "href": datasette.urls.path(f"/-/acl/resource/table/{database}"),
+                    "label": "Manage permissions for all tables",
+                    "description": "Grants here apply to every table in this database",
+                },
+            ]
+
+    return inner
+
+
+@hookimpl
 def track_event(datasette, event):
     async def inner():
         config = datasette.plugin_config("datasette-acl") or {}

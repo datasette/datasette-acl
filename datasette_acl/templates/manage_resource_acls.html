@@ -165,7 +165,11 @@ table.audit tbody tr:first-child td {
   <span class="acl-badge">{{ resource_type }}</span>
 </div>
 
+{% if parent_only %}
+<p class="resource-acl-heading">Every <strong>{{ resource_type }}</strong> in {{ parent_type }} <code>{{ parent }}</code> — these permissions apply to all of them, including ones created later. They combine with any per-{{ resource_type }} permissions.</p>
+{% else %}
 <p class="resource-acl-heading">Resource <code>{{ parent }}{% if child %}/{{ child }}{% endif %}</code></p>
+{% endif %}
 
 <form action="{{ request.path }}" method="post" class="permissions-form">
   {% if groups %}

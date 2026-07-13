@@ -110,11 +110,27 @@ async def resource_exists(
     creating it (issue #43). ``IS`` is NULL-safe, so a parent-only resource
     (``child`` NULL) matches correctly.
 
+    A ``child`` of NULL for a *child-bearing* resource type (one with a
+    ``parent_class``, e.g. ``table``) names the parent-level resource: "all
+    tables in this database". Its ``resources_sql`` only enumerates concrete
+    children, so existence is instead defined by the parent class: the
+    parent-level resource exists iff the parent itself does. Core caps the
+    hierarchy at two levels, so the parent class's rows are always
+    ``(name, NULL)``. Grants on such a resource cascade to every child via
+    core's (parent, child=NULL) allow-row resolution.
+
     Returns False for unknown resource types.
     """
     rc = resource_class_for(datasette, resource_type)
     if rc is None:
         return False
+    if child is None and rc.parent_class is not None:
+        inner = await rc.parent_class.resources_sql(datasette, actor=None)
+        result = await datasette.get_internal_database().execute(
+            f"SELECT 1 FROM ({inner}) WHERE parent IS :parent LIMIT 1",
+            {"parent": parent},
+        )
+        return bool(result.rows)
     inner = await rc.resources_sql(datasette, actor=None)
     result = await datasette.get_internal_database().execute(
         f"SELECT 1 FROM ({inner}) WHERE parent IS :parent AND child IS :child LIMIT 1",
